@@ -3,7 +3,6 @@ import pyscf
 import numpy as np
 import os
 from pyscf import lib
-from pyscf import gto, solvent
 from gpu4pyscf.dft import rks
 from monty.json import jsanitize
 # from gpu4pyscf import dft
@@ -60,11 +59,14 @@ def get_mfGPU(mol):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--order', type=int, default= 0, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
+    parser.add_argument('--order', type=int, default= 1, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
     parser.add_argument('--dir', type=str, default='./', help='DFT functional')
     parser.add_argument('--fmax', type=float, default=1e-4, help='Maximum force for optimization')
     parser.add_argument('--steps', type=int, default=500, help='Number of optimization steps')
     args = parser.parse_args()
+
+    bas = 'def2-svpd'
+    max_memory = 32000
 
 
     atom_path = os.path.join(args.dir, 's.xyz')
@@ -145,9 +147,32 @@ if __name__ == "__main__":
     traj.close()
 
     print("\nOptimization completed!")
+    elapsed_time = time.time() - start_time
+    logging.info(f"Elapsed time: {elapsed_time:.2f} seconds")
+    
     atoms.write(os.path.join(args.dir, 'final.xyz'))
 
 
-    elapsed_time = time.time() - start_time
-    logging.info(f"Elapsed time: {elapsed_time:.2f} seconds")
-    print("--- %s seconds ---" % (elapsed_time))
+    # compute the Heassian matrix of the optimized geometry directly using PySCF
+    atom_string = ase_to_string(atoms)
+    mol = pyscf.M(atom=atom_string, basis= bas, max_memory= max_memory)
+    mf_GPU = get_mfGPU(mol)
+
+    start_time = time.time()
+    mf_GPU.kernel()
+
+    # Compute the Hessian
+    h = mf_GPU.Hessian() 
+    h.auxbasis_response = 2
+
+    h_dft = h.kernel()
+    natm = h_dft.shape[0]
+    h_dft = h_dft.transpose([0,2,1,3]).reshape([3*natm,3*natm])
+
+    # Compute the eigenvalues of the Hessian matrix
+    eigenvalues = np.linalg.eigvals(h_dft)
+    print("Eigenvalues of the Hessian matrix:")
+    print(np.sort(eigenvalues))
+
+    logging.info(f"Eigenvalues of the Hessian matrix:\n")
+    logging.info(np.sort(eigenvalues))
