@@ -63,11 +63,12 @@ if __name__ == "__main__":
     parser.add_argument('--dir', type=str, default='./', help='DFT functional')
     parser.add_argument('--fmax', type=float, default=1e-4, help='Maximum force for optimization')
     parser.add_argument('--steps', type=int, default=500, help='Number of optimization steps')
+    parser.add_argument('--basis', type=str, default='def2-svpd', help='Basis set')
+    parser.add_argument('--max_memory', type=int, default=32000, help='Maximum memory')
     args = parser.parse_args()
 
-    bas = 'def2-svpd'
-    max_memory = 32000
-
+    basis = args.basis
+    max_memory = args.max_memory
 
     atom_path = os.path.join(args.dir, 's.xyz')
     atoms = read(atom_path)
@@ -155,7 +156,7 @@ if __name__ == "__main__":
 
     # compute the Heassian matrix of the optimized geometry directly using PySCF
     atom_string = ase_to_string(atoms)
-    mol = pyscf.M(atom=atom_string, basis= bas, max_memory= max_memory)
+    mol = pyscf.M(atom=atom_string, basis= basis, max_memory= max_memory)
     mf_GPU = get_mfGPU(mol)
 
     start_time = time.time()

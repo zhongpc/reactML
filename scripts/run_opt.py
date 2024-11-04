@@ -60,11 +60,16 @@ def get_mfGPU(mol):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--order', type=int, default= 0, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
+    parser.add_argument('--order', type=int, default= 1, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
     parser.add_argument('--dir', type=str, default='./', help='DFT functional')
     parser.add_argument('--fmax', type=float, default=1e-4, help='Maximum force for optimization')
     parser.add_argument('--steps', type=int, default=500, help='Number of optimization steps')
+    parser.add_argument('--basis', type=str, default='def2-svpd', help='Basis set')
+    parser.add_argument('--max_memory', type=int, default=32000, help='Maximum memory')
     args = parser.parse_args()
+
+    basis = args.basis
+    max_memory = args.max_memory
 
 
     atom_path = os.path.join(args.dir, 's.xyz')
