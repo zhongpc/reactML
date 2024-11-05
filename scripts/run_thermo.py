@@ -31,7 +31,7 @@ def get_mfGPU(mol):
     # auxbasis = 'def2-svp-jkfit' #  need to find the right auxbasis
     # auxbasis = 'def2-tzvpp-jkfit'
     scf_tol = 1e-10
-    max_scf_cycles = 50
+    max_scf_cycles = 500
     screen_tol = 1e-14
     grids_level = 3
         
@@ -61,7 +61,7 @@ def get_mfGPU_metaGGA(mol):
     # auxbasis = 'def2-svp-jkfit' #  need to find the right auxbasis
     # auxbasis = 'def2-universal-jkfit'
     scf_tol = 1e-10
-    max_scf_cycles = 50
+    max_scf_cycles = 100
     screen_tol = 1e-14
     grids_level = 3
         
@@ -92,22 +92,25 @@ def get_mfGPU_metaGGA(mol):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--order', type=int, default= 0, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
+    parser.add_argument('--order', type=int, default= 1, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
     parser.add_argument('--dir', type=str, default='./', help='DFT functional')
-    parser.add_argument('--fmax', type=float, default=0.001, help='Maximum force for optimization')
-    parser.add_argument('--steps', type=int, default=50, help='Number of optimization steps')
+    parser.add_argument('--fmax', type=float, default=1e-4, help='Maximum force for optimization')
+    parser.add_argument('--steps', type=int, default=500, help='Number of optimization steps')
+    parser.add_argument('--basis', type=str, default='def2-svpd', help='Basis set')
+    parser.add_argument('--max_memory', type=int, default=32000, help='Maximum memory')
     args = parser.parse_args()
 
-    bas = 'def2-tzvpd'
-    max_memory = 32000
+    basis = args.basis
+    max_memory = args.max_memory
 
 
     atom_path = os.path.join(args.dir, 'final.xyz')
     atoms = read(atom_path)
     atoms_string = ase_to_string(atoms)
 
-    mol = pyscf.M(atom=atoms_string, basis= bas, max_memory= max_memory)
-    mf_GPU = get_mfGPU_metaGGA(mol)
+    mol = pyscf.M(atom=atoms_string, basis= basis, max_memory= max_memory)
+
+    mf_GPU = get_mfGPU(mol) # for Hessian: should not be the metaGGA functional
 
     # Compute Hessian
     h = mf_GPU.Hessian()

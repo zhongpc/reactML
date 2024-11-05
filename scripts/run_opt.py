@@ -31,7 +31,7 @@ def get_mfGPU(mol):
     # auxbasis = 'def2-svp-jkfit' #  need to find the right auxbasis
     # auxbasis = 'def2-tzvpp-jkfit'
     scf_tol = 1e-10
-    max_scf_cycles = 50
+    max_scf_cycles = 200
     screen_tol = 1e-14
     grids_level = 3
         
@@ -138,13 +138,13 @@ if __name__ == "__main__":
         traj.write(atoms_tosave)
         
         # Get current energy and forces
-        energy = atoms.get_potential_energy()
-        forces = atoms.get_forces()
-        fmax = max(np.abs(forces.flatten()))
+        # energy = atoms.get_potential_energy()
+        # forces = atoms.get_forces()
+        # fmax = max(np.abs(forces.flatten()))
         
-        print(f"\nStep {step}:")
-        print(f"Energy: {energy:.6f} eV")
-        print(f"Max force: {fmax:.6f} eV/Å")
+        # print(f"\nStep {step}:")
+        # print(f"Energy: {energy:.6f} eV")
+        # print(f"Max force: {fmax:.6f} eV/Å")
 
     # Save final configuration
     traj.close()
