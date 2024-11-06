@@ -69,6 +69,8 @@ if __name__ == "__main__":
 
     basis = args.basis
     max_memory = args.max_memory
+    delta0 = 0.1
+    threepoint = True
 
     atom_path = os.path.join(args.dir, 's.xyz')
     atoms = read(atom_path)
@@ -109,8 +111,10 @@ if __name__ == "__main__":
     opt = Sella(
         atoms,
         gamma = 0.1,             # convergence criterion for iterative diagonalization
+        delta0 = delta0,         # initial trust radius
         logfile= logfile_path,
         order = args.order,
+        threepoint = threepoint,
         eta = 1e-6,
     )
 
@@ -123,8 +127,8 @@ if __name__ == "__main__":
     fmax = max(np.abs(forces.flatten()))
 
     print("Initial config:")
-    print(f"Energy: {energy:.6f} eV")
-    print(f"Max force: {fmax:.6f} eV/Å")
+    print(f"Energy: {energy:.6f}")
+    print(f"Max force: {fmax:.6f}")
 
     start_time = time.time()
 
@@ -134,15 +138,10 @@ if __name__ == "__main__":
         atoms_tosave = atoms.copy()
         atoms_tosave.calc = None
         traj.write(atoms_tosave)
-        
-        ## Get current energy and forces
-        # energy = atoms.get_potential_energy()
-        # forces = atoms.get_forces()
-        # fmax = max(np.abs(forces.flatten()))
-        
-        # print(f"\nStep {step}:")
-        # print(f"Energy: {energy:.6f} eV")
-        # print(f"Max force: {fmax:.6f} eV/Å")
+
+        if opt.delta < 1e-4:
+            print("Optimization converged with minmum delta (trust radius)!")
+            break
 
     # Save final configuration
     traj.close()
