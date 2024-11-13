@@ -3,7 +3,6 @@ import pyscf
 import numpy as np
 import os
 from pyscf import lib
-from pyscf import gto, solvent
 from gpu4pyscf.dft import rks
 from monty.json import jsanitize
 # from gpu4pyscf import dft
@@ -21,6 +20,51 @@ import argparse
 import logging
 
 lib.num_threads(8)
+
+
+import numpy as np
+from ase import Atoms
+import os
+
+def perturb_atoms(atoms, amplitude=0.01):
+    """
+    Add random perturbations to atomic positions in an ASE Atoms object.
+    
+    Parameters:
+    -----------
+    atoms : ase.Atoms
+        The atomic structure to perturb
+    amplitude : float, optional
+        Maximum displacement amplitude in Angstroms (default: 0.01)
+        
+    Returns:
+    --------
+    ase.Atoms
+        New Atoms object with perturbed positions
+    """
+    
+    # Create a copy of the original atoms object
+    perturbed_atoms = atoms.copy()
+    
+    # Get the number of atoms
+    n_atoms = len(atoms)
+    
+    # Generate random displacements for each atom in 3D
+    # Using normal distribution with mean 0 and std = amplitude/3
+    # (this ensures most perturbations are within ±amplitude)
+    displacements = np.random.normal(0, amplitude/3, size=(n_atoms, 3))
+    
+    # Get original positions
+    positions = perturbed_atoms.get_positions()
+    
+    # Add displacements to positions
+    new_positions = positions + displacements
+    
+    # Set new positions
+    perturbed_atoms.set_positions(new_positions)
+    
+    return perturbed_atoms
+
 
 
 
@@ -55,29 +99,46 @@ def get_mfGPU(mol):
     
     return mf_GPU
 
+def hessian_function(atoms):
+    atom_string = ase_to_string(atoms)
+    mol = pyscf.M(atom=atom_string, basis= basis, max_memory= max_memory)
+    mf_GPU = get_mfGPU(mol)
+
+    # Compute the Hessian
+    h = mf_GPU.Hessian() 
+    h.auxbasis_response = 2
+
+    h_dft = h.kernel()
+    natm = h_dft.shape[0]
+    h_dft_reshape = h_dft.copy()
+    h_dft_reshape = h_dft_reshape.transpose([0,2,1,3]).reshape([3*natm,3*natm])
+
+    return h_dft_reshape
+    
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--order', type=int, default= 1, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
-    parser.add_argument('--dir', type=str, default='./', help='DFT functional')
-    parser.add_argument('--fmax', type=float, default=1e-4, help='Maximum force for optimization')
+    parser.add_argument('--order', type=int, default= 0, help='Order of the saddle point, 0 for optimized geometry, 1 and above for saddle point')
+    parser.add_argument('--dir', type=str, default='./data/structures_3point_develope/INPUT_TS8.xyz', help='DFT functional')
+    parser.add_argument('--fmax', type=float, default=0.001, help='Maximum force for optimization')
     parser.add_argument('--steps', type=int, default=500, help='Number of optimization steps')
+    parser.add_argument('--delta0', type=float, default=0.1, help='Initial trust radius')
     parser.add_argument('--basis', type=str, default='def2-svpd', help='Basis set')
     parser.add_argument('--max_memory', type=int, default=32000, help='Maximum memory')
     args = parser.parse_args()
 
     basis = args.basis
     max_memory = args.max_memory
+    delta0 = args.delta0
     threepoint = True
-
 
     atom_path = os.path.join(args.dir, 's.xyz')
     atoms = read(atom_path)
 
-
-
+    atoms = perturb_atoms(atoms, amplitude = 0.05)
+    
     atoms_string = ase_to_string(atoms)
     calculator = PySCF_calculator(mf_class = get_mfGPU)
 
@@ -112,10 +173,17 @@ if __name__ == "__main__":
     opt = Sella(
         atoms,
         gamma = 0.1,             # convergence criterion for iterative diagonalization
+        delta0 = delta0,         # initial trust radius
         logfile= logfile_path,
         order = args.order,
         threepoint = threepoint,
+        # sigma_inc = 1.15, # default to be 1.15
+        # sigma_dec = 0.65, # default to be 0.65
+        diag_every_n = 40,
+        nsteps_per_force_diag = 30, # when force is small, update the Hessian every n steps
+        check_nsteps = [5, 10, 20], # update the Hessian at the given steps
         eta = 1e-6,
+        hessian_function = hessian_function
     )
 
     # Create trajectory file
@@ -133,7 +201,9 @@ if __name__ == "__main__":
     start_time = time.time()
 
     # Run optimization iteratively
-    for step in opt.irun(fmax= args.fmax, steps= args.steps):
+    before_next_hessian = 0
+
+    for step, _ in enumerate(opt.irun(fmax= args.fmax, steps= args.steps)):
         # Save current configuration to trajectory
         atoms_tosave = atoms.copy()
         atoms_tosave.calc = None
@@ -141,16 +211,20 @@ if __name__ == "__main__":
 
         if opt.delta < 1e-4:
             print("Optimization converged with minmum delta (trust radius)!")
-            break
-    
+            opt.delta = 5e-4
+
+        hessian = opt.pes.H
+        eigen_values = hessian.evals
+        print(eigen_values)
 
     # Save final configuration
     traj.close()
 
     print("\nOptimization completed!")
-    atoms.write(os.path.join(args.dir, 'final.xyz'))
-
-
     elapsed_time = time.time() - start_time
     logging.info(f"Elapsed time: {elapsed_time:.2f} seconds")
-    print("--- %s seconds ---" % (elapsed_time))
+    
+    atoms.write(os.path.join(args.dir, 'final.xyz'))
+
+    logging.info(f"Eigenvalues of the Hessian matrix:\n")
+    logging.info(np.sort(eigen_values))
