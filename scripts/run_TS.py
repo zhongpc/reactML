@@ -5,6 +5,7 @@ import os
 from pyscf import lib
 from gpu4pyscf.dft import rks
 from monty.json import jsanitize
+from copy import deepcopy
 # from gpu4pyscf import dft
 # from pyscf.geomopt.geometric_solver import optimize
 
@@ -12,6 +13,7 @@ from ase.io import read, write
 from ase import Atoms
 from ase.io import read, write
 from ase.io import Trajectory
+from ase.calculators.singlepoint import SinglePointCalculator
 
 from sella import Sella
 from reactML.common.pyscf2ase import ase_to_string, PySCF_calculator
@@ -180,7 +182,7 @@ if __name__ == "__main__":
         # sigma_inc = 1.15, # default to be 1.15
         # sigma_dec = 0.65, # default to be 0.65
         diag_every_n = 30,
-        nsteps_per_force_diag = 30, # when force is small, update the Hessian every n steps
+        nsteps_per_force_diag = 20, # when force is small, update the Hessian every n steps
         check_nsteps = [5, 10, 15], # update the Hessian at the given steps
         eta = 1e-6,
         hessian_function = hessian_function
@@ -202,12 +204,22 @@ if __name__ == "__main__":
 
     # Run optimization iteratively
     before_next_hessian = 0
+    atoms_list = []
 
     for step, _ in enumerate(opt.irun(fmax= args.fmax, steps= args.steps)):
         # Save current configuration to trajectory
-        atoms_tosave = atoms.copy()
-        atoms_tosave.calc = None
-        traj.write(atoms_tosave)
+        atoms_tosave = atoms.copy()# 
+        energy = atoms.get_potential_energy()
+        forces = atoms.get_forces()
+
+        # Create a SinglePointCalculator with the calculated properties
+        calc = SinglePointCalculator(atoms_tosave,
+                               energy=energy,
+                               forces=forces,)
+    
+        # Attach the calculator to the copied atoms
+        atoms_tosave.calc = calc
+        atoms_list.append(atoms_tosave)
 
         if opt.delta < 1e-4:
             print("Optimization converged with minmum delta (trust radius)!")
@@ -224,6 +236,7 @@ if __name__ == "__main__":
     elapsed_time = time.time() - start_time
     logging.info(f"Elapsed time: {elapsed_time:.2f} seconds")
     
+    write(os.path.join(args.dir, 'sella_opt.xyz'), atoms_list)
     atoms.write(os.path.join(args.dir, 'final.xyz'))
 
     logging.info(f"Eigenvalues of the Hessian matrix:\n")

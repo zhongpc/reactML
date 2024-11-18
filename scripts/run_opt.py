@@ -12,6 +12,8 @@ from ase.io import read, write
 from ase import Atoms
 from ase.io import read, write
 from ase.io import Trajectory
+from ase.calculators.singlepoint import SinglePointCalculator
+
 
 from sella import Sella
 from reactML.common.pyscf2ase import ase_to_string, PySCF_calculator
@@ -202,12 +204,22 @@ if __name__ == "__main__":
 
     # Run optimization iteratively
     before_next_hessian = 0
+    atoms_list = []
 
     for step, _ in enumerate(opt.irun(fmax= args.fmax, steps= args.steps)):
         # Save current configuration to trajectory
-        atoms_tosave = atoms.copy()
-        atoms_tosave.calc = None
-        traj.write(atoms_tosave)
+        atoms_tosave = atoms.copy()# 
+        energy = atoms.get_potential_energy()
+        forces = atoms.get_forces()
+
+        # Create a SinglePointCalculator with the calculated properties
+        calc = SinglePointCalculator(atoms_tosave,
+                               energy=energy,
+                               forces=forces,)
+    
+        # Attach the calculator to the copied atoms
+        atoms_tosave.calc = calc
+        atoms_list.append(atoms_tosave)
 
         if opt.delta < 1e-4:
             print("Optimization converged with minmum delta (trust radius)!")
@@ -225,6 +237,7 @@ if __name__ == "__main__":
     logging.info(f"Elapsed time: {elapsed_time:.2f} seconds")
     
     atoms.write(os.path.join(args.dir, 'final.xyz'))
+    write(os.path.join(args.dir, 'sella_opt.xyz'), atoms_list)
 
     logging.info(f"Eigenvalues of the Hessian matrix:\n")
     logging.info(np.sort(eigen_values))
