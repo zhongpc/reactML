@@ -31,7 +31,9 @@ def read_pcm_eps():
 
 
 def build_mf(mol: gto.Mole, args: argparse.Namespace):
-    mol.build(basis=args.basis, charge=args.charge, spin=args.spin, max_memory=args.max_memory * 1024)
+    # convert memory from GB to MB
+    max_memory = args.max_memory * 1024 if args.max_memory else None
+    mol.build(basis=args.basis, charge=args.charge, spin=args.spin, max_memory=max_memory)
     mf = dft.KS(mol, xc=args.xc)
 
     # set solvation model
@@ -180,15 +182,15 @@ def main():
     # hessian calculation
     if args.freq:
         hessian = mf.Hessian().kernel()
-        freq_info = thermo.harmonic_analysis(mol, hessian, imaginary_freq=False)
+        freq_info = thermo.harmonic_analysis(mf.mol, hessian, imaginary_freq=False)
         # imaginary frequencies
         freq_au = freq_info["freq_au"]
         if np.any(freq_au < 0):
             num_imag_freq = np.sum(freq_au < 0)
             print(f"Warning: {num_imag_freq} imaginary frequencies detected!")
         thermo_info = thermo.thermo(mf, freq_info["freq_au"], args.temp, args.press)
-        thermo.dump_normal_mode(mol, freq_info)
-        thermo.dump_thermo(mol, thermo_info)
+        thermo.dump_normal_mode(mf.mol, freq_info)
+        thermo.dump_thermo(mf.mol, thermo_info)
 
         # exclude translation contributions
         G_tot_exclude_trans = thermo_info["G_tot"][0] - thermo_info["G_trans"][0]
