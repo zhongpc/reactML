@@ -18,7 +18,7 @@ def write_xyz(mol: gto.Mole, filename: str, charge: int = 0, spin: int = 1):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("xyzfile", help="Input xyz file")
-    parser.add_argument("--xc", "-f", type=str, default="B3LYP", help="Name of Exchange-Correlation Funcional")
+    parser.add_argument("--xc", "-f", type=str, default="B3LYP", help="Name of Exchange-Correlation Functional")
     parser.add_argument("--basis", "-b", type=str, default="6-31++G(d,p)", help="Name of Basis Set")
     parser.add_argument("--charge", "-c", type=int, default=0, help="Total charge")
     parser.add_argument("--spin", "-s", type=int, default=0, help="Total spin (2S not 2S+1)")
