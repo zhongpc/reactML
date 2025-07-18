@@ -10,6 +10,7 @@ def write_xyz(mol: gto.Mole, filename: str, charge: int = 0, spin: int = 1):
     coords = mol.atom_coords(unit="Angstrom")
     with open(filename, "w") as f:
         f.write(f"{len(elements)}\n")
+        # Convert spin (2S) to multiplicity (2S+1) format, as required by quantum chemistry conventions.
         f.write(f"{charge} {spin + 1}\n")
         for ele, coord in zip(elements, coords):
             f.write(f"{ele: <2}    {coord[0]:10.6f}    {coord[1]:10.6f}    {coord[2]:10.6f}\n")
