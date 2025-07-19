@@ -63,7 +63,7 @@ def build_mf(mol: gto.Mole, args: argparse.Namespace):
                 You must provide exactly 8 parameters for SMD solvation model:
                 [n, n25, alpha, beta, gamma, epsilon, phi, psi]
                 """
-            mf.with_solvent.solvent_descriptors  = args.solvent_param
+            mf.with_solvent.solvent_descriptors = args.solvent_param
     # set other parameters
     mf.disp = args.disp
     mf.conv_tol = args.scf_conv
