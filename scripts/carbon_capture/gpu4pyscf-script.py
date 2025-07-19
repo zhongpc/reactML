@@ -35,24 +35,37 @@ def build_mf(mol: gto.Mole, args: argparse.Namespace):
     max_memory = args.max_memory * 1024 if args.max_memory else None
     mol.build(basis=args.basis, charge=args.charge, spin=args.spin, max_memory=max_memory)
     mf = dft.KS(mol, xc=args.xc)
-
+    # density fitting
+    if args.density_fit:
+        mf = mf.density_fit(auxbasis=args.aux_basis)
     # set solvation model
+    assert args.solvent is None or args.solvent_params is None, \
+        "You can only specify one of --solvent or --solvent-param"
     pcm_models = {"C-PCM", "IEF-PCM", "SS(V)PE", "COSMO"}
     if args.solvation in pcm_models:
         eps_dict = read_pcm_eps()
         mf = mf.PCM()
         mf.with_solvent.method = args.solvation
-        if isinstance(args.solvent, str):
+        if args.solvent is not None:
             assert args.solvent.lower() in eps_dict, \
-                f"Solvent {args.solvent} not found in pcm_eps.txt"
+                f"Solvent {args.solvent} not found in predefined solvents"
             eps = eps_dict[args.solvent.lower()]
-        elif isinstance(args.solvent, (int, float)):
-            eps = float(args.solvent)
+        elif args.solvent_params is not None:
+            assert len(args.solvent_params) == 1, \
+                "You must provide exactly one parameter of dielectric constant for PCM model"
+            eps = args.solvent_params[0]
         mf.with_solvent.eps = eps
     elif args.solvation == "SMD":
         mf = mf.SMD()
-        mf.with_solvent.solvent = args.solvent
-    
+        if args.solvent is not None:
+            mf.with_solvent.solvent = args.solvent
+        elif args.solvent_params is not None:
+            assert len(args.solvent_params) == 8, \
+                """
+                You must provide exactly 8 parameters for SMD solvation model:
+                [n, n25, alpha, beta, gamma, epsilon, phi, psi]
+                """
+            mf.with_solvent.solvent_descriptors = args.solvent_params
     # set other parameters
     mf.disp = args.disp
     mf.conv_tol = args.scf_conv
@@ -97,12 +110,24 @@ def main():
         help="Maximum number of SCF cycles (default 200)",
     )
     parser.add_argument(
+        "--density-fit", "-ri", action="store_true",
+        help="Whether to use density fitting (RI) approximation",
+    )
+    parser.add_argument(
+        "--aux-basis", type=str, default=None,
+        help="Auxiliary basis set for density fitting (default None, use default from pyscf)",
+    )
+    parser.add_argument(
         "--solvation", type=str, default=None,
         help="Type of solvation model (default None)",
     )
     parser.add_argument(
-        "--solvent", default=None,
-        help="Name or dielectric constant of the solvent (default None)",
+        "--solvent", type=str, default=None,
+        help="Name of solvent for solvation model (default None)",
+    )
+    parser.add_argument(
+        "--solvent-params", type=float, nargs="+", default=None,
+        help="Parameters for solvation model (default None)",
     )
     parser.add_argument(
         "--opt", "-o", action="store_true",
