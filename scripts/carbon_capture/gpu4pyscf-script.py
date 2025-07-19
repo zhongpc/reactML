@@ -39,7 +39,7 @@ def build_mf(mol: gto.Mole, args: argparse.Namespace):
     if args.density_fit:
         mf = mf.density_fit(auxbasis=args.aux_basis)
     # set solvation model
-    assert args.solvent is None or args.solvent_param is None, \
+    assert args.solvent is None or args.solvent_params is None, \
         "You can only specify one of --solvent or --solvent-param"
     pcm_models = {"C-PCM", "IEF-PCM", "SS(V)PE", "COSMO"}
     if args.solvation in pcm_models:
@@ -47,23 +47,25 @@ def build_mf(mol: gto.Mole, args: argparse.Namespace):
         mf = mf.PCM()
         mf.with_solvent.method = args.solvation
         if args.solvent is not None:
+            assert args.solvent.lower() in eps_dict, \
+                f"Solvent {args.solvent} not found in predefined solvents"
             eps = eps_dict[args.solvent.lower()]
-        elif args.solvent_param is not None:
-            assert len(args.solvent_param) == 1, \
+        elif args.solvent_params is not None:
+            assert len(args.solvent_params) == 1, \
                 "You must provide exactly one parameter of dielectric constant for PCM model"
-            eps = args.solvent_param[0]
+            eps = args.solvent_params[0]
         mf.with_solvent.eps = eps
     elif args.solvation == "SMD":
         mf = mf.SMD()
         if args.solvent is not None:
             mf.with_solvent.solvent = args.solvent
-        elif args.solvent_param is not None:
-            assert len(args.solvent_param) == 8, \
+        elif args.solvent_params is not None:
+            assert len(args.solvent_params) == 8, \
                 """
                 You must provide exactly 8 parameters for SMD solvation model:
                 [n, n25, alpha, beta, gamma, epsilon, phi, psi]
                 """
-            mf.with_solvent.solvent_descriptors = args.solvent_param
+            mf.with_solvent.solvent_descriptors = args.solvent_params
     # set other parameters
     mf.disp = args.disp
     mf.conv_tol = args.scf_conv
@@ -124,7 +126,7 @@ def main():
         help="Name of solvent for solvation model (default None)",
     )
     parser.add_argument(
-        "--solvent-param", type=float, nargs="+", default=None,
+        "--solvent-params", type=float, nargs="+", default=None,
         help="Parameters for solvation model (default None)",
     )
     parser.add_argument(
