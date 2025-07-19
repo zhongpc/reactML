@@ -35,7 +35,9 @@ def build_mf(mol: gto.Mole, args: argparse.Namespace):
     max_memory = args.max_memory * 1024 if args.max_memory else None
     mol.build(basis=args.basis, charge=args.charge, spin=args.spin, max_memory=max_memory)
     mf = dft.KS(mol, xc=args.xc)
-
+    # density fitting
+    if args.density_fit:
+        mf = mf.density_fit(auxbasis=args.aux_basis)
     # set solvation model
     assert args.solvent is None or args.solvent_param is None, \
         "You can only specify one of --solvent or --solvent-param"
@@ -104,6 +106,14 @@ def main():
     parser.add_argument(
         "--scf-max-cycle", type=int, default=200,
         help="Maximum number of SCF cycles (default 200)",
+    )
+    parser.add_argument(
+        "--density-fit", "-ri", action="store_true",
+        help="Whether to use density fitting (RI) approximation",
+    )
+    parser.add_argument(
+        "--aux-basis", type=str, default=None,
+        help="Auxiliary basis set for density fitting (default None, use default from pyscf)",
     )
     parser.add_argument(
         "--solvation", type=str, default=None,
