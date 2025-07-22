@@ -1,82 +1,18 @@
-import os.path as osp
 import argparse
 import numpy as np
 from pyscf import gto
-from gpu4pyscf import dft
 from pyscf.geomopt import geometric_solver
 from pyscf.hessian import thermo
 
-
-def write_xyz(mol: gto.Mole, filename: str, charge: int = 0, spin: int = 1):
-    elements = mol.elements
-    coords = mol.atom_coords(unit="Angstrom")
-    with open(filename, "w") as f:
-        f.write(f"{len(elements)}\n")
-        # Convert spin (2S) to multiplicity (2S+1) format, as required by quantum chemistry conventions.
-        f.write(f"{charge} {spin + 1}\n")
-        for ele, coord in zip(elements, coords):
-            f.write(f"{ele: <2}    {coord[0]:10.6f}    {coord[1]:10.6f}    {coord[2]:10.6f}\n")
-
-
-def read_pcm_eps():
-    # from https://gaussian.com/scrf/
-    pcm_eps_txt = osp.join(osp.dirname(__file__), "pcm_eps.txt")
-    with open(pcm_eps_txt, "r") as f:
-        lines = f.readlines()
-    eps_dict = {}
-    for line in lines:
-        solvent, eps = line.split(": ")
-        eps_dict[solvent.strip().lower()] = float(eps.strip())
-    return eps_dict
-
-
-def build_mf(mol: gto.Mole, args: argparse.Namespace):
-    # convert memory from GB to MB
-    max_memory = args.max_memory * 1024 if args.max_memory else None
-    mol.build(basis=args.basis, charge=args.charge, spin=args.spin, max_memory=max_memory)
-    mf = dft.KS(mol, xc=args.xc)
-    # density fitting
-    if args.density_fit:
-        mf = mf.density_fit(auxbasis=args.aux_basis)
-    # set solvation model
-    assert args.solvent is None or args.solvent_params is None, \
-        "You can only specify one of --solvent or --solvent-param"
-    pcm_models = {"C-PCM", "IEF-PCM", "SS(V)PE", "COSMO"}
-    if args.solvation in pcm_models:
-        eps_dict = read_pcm_eps()
-        mf = mf.PCM()
-        mf.with_solvent.method = args.solvation
-        if args.solvent is not None:
-            assert args.solvent.lower() in eps_dict, \
-                f"Solvent {args.solvent} not found in predefined solvents"
-            eps = eps_dict[args.solvent.lower()]
-        elif args.solvent_params is not None:
-            assert len(args.solvent_params) == 1, \
-                "You must provide exactly one parameter of dielectric constant for PCM model"
-            eps = args.solvent_params[0]
-        mf.with_solvent.eps = eps
-    elif args.solvation == "SMD":
-        mf = mf.SMD()
-        if args.solvent is not None:
-            mf.with_solvent.solvent = args.solvent
-        elif args.solvent_params is not None:
-            assert len(args.solvent_params) == 8, \
-                """
-                You must provide exactly 8 parameters for SMD solvation model:
-                [n, n25, alpha, beta, gamma, epsilon, phi, psi]
-                """
-            mf.with_solvent.solvent_descriptors = args.solvent_params
-    # set other parameters
-    mf.disp = args.disp
-    mf.conv_tol = args.scf_conv
-    mf.grids.grid_level = args.grid
-    mf.max_cycle = args.scf_max_cycle
-    return mf
+from reactML.common.utils import write_xyz, build_dft
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("xyzfile", help="Input xyz file")
+    parser.add_argument(
+        "xyzfile", type=str,
+        help="Input xyz file",
+    )
     parser.add_argument(
         "--xc", "-f", type=str, default="B3LYP",
         help="Name of Exchange-Correlation Functional",
@@ -180,7 +116,7 @@ def main():
     mol.fromfile(filename=args.xyzfile)
 
     # build the molecule with C-PCM solvation model
-    mf = build_mf(mol, args)
+    mf = build_dft(mol, **vars(args))
 
     # geometric optimization
     if args.opt:
@@ -199,7 +135,7 @@ def main():
             return
         # save optimized struct
         optfile = args.xyzfile.replace(".xyz", "_opt.xyz")
-        write_xyz(mf.mol, optfile, args.charge, args.spin)
+        write_xyz(mf.mol, optfile)
 
     # single point calculation
     mf.run()
