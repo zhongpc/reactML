@@ -115,7 +115,6 @@ def main():
     # set up the NEB
     neb = NEB(
         images=images,
-        
     )
     neb.interpolate(method=args.interpolate_method)
     

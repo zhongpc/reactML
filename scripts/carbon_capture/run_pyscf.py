@@ -1,10 +1,30 @@
 import argparse
 import numpy as np
+
+try:
+    from gpu4pyscf import dft
+except:
+    from pyscf import dft
 from pyscf import gto
-from pyscf.geomopt import geometric_solver
 from pyscf.hessian import thermo
 
-from reactML.common.utils import write_xyz, build_dft
+from ase import Atoms, units
+import ase.io
+from sella import Sella
+
+from reactML.common.utils import build_dft, dump_normal_mode
+from reactML.common.ase_interface import PySCFCalculator
+
+
+def hessian_function(atoms: Atoms, method: dft.rks.RKS | dft.uks.UKS) -> np.ndarray:
+    """Calculate the Hessian matrix for the given atoms using the provided method."""
+    method.mol.set_geom_(atoms.get_positions(), unit="Angstrom")
+    method.run()
+    hessian = method.Hessian().kernel()
+    natom = method.mol.natm
+    hessian = hessian.transpose(0, 2, 1, 3).reshape(3 * natom, 3 * natom)
+    hessian *= (units.Hartree / units.Bohr**2)  # Convert from Hartree/Bohr^2
+    return hessian
 
 
 def main():
@@ -18,7 +38,7 @@ def main():
         help="Name of Exchange-Correlation Functional",
     )
     parser.add_argument(
-        "--basis", "-b", type=str, default="6-31++G(d,p)",
+        "--basis", "-b", type=str, default="def2-SVPD",
         help="Name of Basis Set",
     )
     parser.add_argument(
@@ -39,7 +59,7 @@ def main():
     )
     parser.add_argument(
         "--scf-conv", type=float, default=1e-6,
-        help="SCF convergence threshold (default 1e-6)",
+        help="SCF convergence threshold (default 1e-6 a.u.)",
     )
     parser.add_argument(
         "--scf-max-cycle", type=int, default=200,
@@ -70,28 +90,28 @@ def main():
         help="Whether to do optimize the geometry",
     )
     parser.add_argument(
-        "--opt-max-cycle", type=int, default=200,
-        help="Maximum number of optimization cycles (default 200)",
+        "--internal", action="store_true",
+        help="Whether to use internal coordinates for optimization",
     )
     parser.add_argument(
-        "--opt-conv-energy", type=float, default=1e-6,
-        help="Convergence threshold for optimization energy (default 1e-6)",
+        "--calc-hessian", action="store_true",
+        help="Whether to calculate the Hessian matrix during optimization",
     )
     parser.add_argument(
-        "--opt-conv-grms", type=float, default=3e-4,
-        help="Convergence threshold for optimization gradient RMS (default 3e-4 Eh/Bohr)",
+        "--diag-every-n", type=int, default=None,
+        help="Number of steps per diagonalization in optimization (default 3)",
     )
     parser.add_argument(
-        "--opt-conv-gmax", type=float, default=4.5e-4,
-        help="Convergence threshold for optimization gradient MAX (default 4.5e-4 Eh/Bohr)",
+        "--opt-fmax", type=float, default=4.5e-4,
+        help="Maximum force for optimization convergence (default 4.5e-4 a.u.)",
     )
     parser.add_argument(
-        "--opt-conv-drms", type=float, default=1.2e-3,
-        help="Convergence threshold for optimization displacement RMS (default 1.2e-3 Angstrom)",
+        "--opt-max-steps", type=int, default=1000,
+        help="Maximum number of optimization steps (default 1000)",
     )
     parser.add_argument(
-        "--opt-conv-dmax", type=float, default=1.8e-3,
-        help="Convergence threshold for optimization displacement MAX (default 1.8e-3 Angstrom)",
+        "--save-traj", action="store_true",
+        help="Whether to save the optimization trajectory",
     )
     parser.add_argument(
         "--freq", action="store_true",
@@ -111,31 +131,40 @@ def main():
     )
     args = parser.parse_args()
 
-    # read the xyz file with pyscf
+    # read the xyz file
     mol = gto.Mole()
     mol.fromfile(filename=args.xyzfile)
+    atoms = ase.io.read(args.xyzfile, format="xyz")
 
-    # build the molecule with C-PCM solvation model
     mf = build_dft(mol, **vars(args))
-
+    
+    filename = args.xyzfile.split(".", -1)[0]
     # geometric optimization
     if args.opt:
-        opt = geometric_solver.GeometryOptimizer(mf)
-        opt.params = {
-            'convergence_energy': args.opt_conv_energy,  # Eh
-            'convergence_grms': args.opt_conv_grms,  # Eh/Bohr
-            'convergence_gmax': args.opt_conv_gmax,  # Eh/Bohr
-            'convergence_drms': args.opt_conv_drms,  # Angstrom
-            'convergence_dmax': args.opt_conv_dmax,  # Angstrom
-        }
-        opt.max_cycle = args.opt_max_cycle
-        opt.kernel()
-        if not opt.converged:
-            print("Geometry Optimization not converged!!")
-            return
-        # save optimized struct
-        optfile = args.xyzfile.replace(".xyz", "_opt.xyz")
-        write_xyz(mf.mol, optfile)
+        calculator = PySCFCalculator(method=mf)
+        atoms.calc = calculator
+        trajectory = f"{filename}_opt.traj" if args.save_traj else None
+        # sella_logfile = f"{filename}_sella.log" if args.save_traj else None
+        opt = Sella(
+            atoms=atoms,
+            trajectory=trajectory,
+            # logfile=sella_logfile,
+            order=0,  # 0 for minimum, 1 for saddle point
+            internal=args.internal,
+            eig=args.calc_hessian,
+            threepoint=True,
+            diag_every_n=args.diag_every_n,
+            hessian_function=lambda x: hessian_function(x, mf),
+        )
+        fmax = args.opt_fmax * units.Hartree / units.Bohr  # Convert from Hartree/Bohr
+        opt.run(fmax=fmax, steps=args.opt_max_steps)
+        # for step, _ in enumerate(opt.irun(fmax=fmax, steps=args.opt_max_steps)):
+        #     hessian = opt.pes.H
+        #     eigen_values = hessian.evals
+        #     print(f"Step {step}: Hessian eigenvalues: {eigen_values}")
+        # save the optimized geometry
+        ase.io.write(f"{filename}_opt.xyz", opt.atoms, format="xyz")
+        mf.mol.set_geom_(opt.atoms.get_positions(), unit="Angstrom")
 
     # single point calculation
     mf.run()
@@ -150,7 +179,7 @@ def main():
             num_imag_freq = np.sum(freq_au < 0)
             print(f"Warning: {num_imag_freq} imaginary frequencies detected!")
         thermo_info = thermo.thermo(mf, freq_info["freq_au"], args.temp, args.press)
-        thermo.dump_normal_mode(mf.mol, freq_info)
+        dump_normal_mode(mf.mol, freq_info)
         thermo.dump_thermo(mf.mol, thermo_info)
 
         # exclude translation contributions
