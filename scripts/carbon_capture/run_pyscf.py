@@ -132,8 +132,8 @@ def main():
     args = parser.parse_args()
 
     # read the xyz file
-    mol = gto.Mole()
-    mol.fromfile(filename=args.xyzfile)
+    mol = gto.Mole(charge=args.charge, spin=args.spin)  # mol.build() will be called in mol.fromfile
+    mol.fromfile(filename=args.xyzfile)                 # we must set charge and spin before reading the file
     atoms = ase.io.read(args.xyzfile, format="xyz")
 
     mf = build_dft(mol, **vars(args))
@@ -171,6 +171,9 @@ def main():
 
     # hessian calculation
     if args.freq:
+        if not mf.converged:
+            print("Warning: SCF calculation did not converge. Don't calculate frequencies.")
+            return
         hessian = mf.Hessian().kernel()
         freq_info = thermo.harmonic_analysis(mf.mol, hessian, imaginary_freq=False)
         # imaginary frequencies

@@ -1,23 +1,21 @@
 import argparse
+
+import numpy as np
+from pyscf import gto
 import ase.io
 from ase.mep import NEB
+from ase.optimize import FIRE
+from ase import units
 
-from pyscf import gto
+from reactML.common.utils import build_dft
+from reactML.common.ase_interface import PySCFCalculator
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "initxyz", type=str,
-        help="Initial geometry in xyz format",
-    )
-    parser.add_argument(
-        "finalxyz", type=str,
-        help="Final geometry in xyz format",
-    )
-    parser.add_argument(
-        "--prefix", "-p", type=str, default="neb",
-        help="Prefix for output files",
+        "xyzfile", type=str,
+        help="Geometry file in XYZ format containing initial and final structures",
     )
     parser.add_argument(
         "--xc", "-f", type=str, default="B3LYP",
@@ -98,30 +96,59 @@ def main():
         choices=["linear", "idpp"], default="linear",
         help="Interpolation method for NEB (default: linear)",
     )
+    parser.add_argument(
+        "--opt-fmax", type=float, default=4.5e-4,
+        help="Maximum force for optimization convergence (default 4.5e-4 a.u.)",
+    )
+    parser.add_argument(
+        "--opt-max-steps", type=int, default=100_000_000,
+        help="Maximum number of optimization steps (default 100,000,000)",
+    )
     args = parser.parse_args()
 
     # read the initial and final geometries
-    init_mol = gto.Mole.fromfile(filename=args.initxyz)
-    final_mol = gto.Mole.fromfile(filename=args.finalxyz)
-    init_atoms = ase.io.read(args.initxyz, format="xyz")
-    final_atoms = ase.io.read(args.finalxyz, format="xyz")
+    atoms_list = ase.io.read(args.xyzfile, format="xyz", index=":")
+    assert len(atoms_list) == 2, "Input file must contain exactly two structures: initial and final geometries."
+    init_atoms, final_atoms = atoms_list[0], atoms_list[-1]
+    assert np.all(init_atoms.symbols == final_atoms.symbols), \
+        "Initial and final geometries must have the same atoms."
 
+    # pyscf will only read the first structure from the file
+    mol = gto.Mole(charge=args.charge, spin=args.spin)  # mol.build() will be called in mol.fromfile
+    mol.fromfile(filename=args.xyzfile)                 # we must set charge and spin before reading the file
+    
     # create images
     images = [init_atoms]
     for _ in range(args.num_images):
         images.append(init_atoms.copy())
     images.append(final_atoms)
 
+    filename = args.xyzfile.split(".", -1)[0]
+
     # set up the NEB
     neb = NEB(
         images=images,
+        climb=args.climbing_image,
+        method=args.neb_method,
     )
     neb.interpolate(method=args.interpolate_method)
     
+    # set up calculators
+    mf = build_dft(mol, **vars(args))
+    for i, image in enumerate(neb.images):
+        if i == 0:
+            image.calc = PySCFCalculator(method=mf)
+        else:
+            image.calc = PySCFCalculator(method=mf.copy())
+    
+    # set up the optimizer
+    opt = FIRE(
+        neb,
+        trajectory=f"{filename}_neb.traj",
+    )
+    fmax = args.opt_fmax * units.Hartree / units.Bohr  # Convert from Hartree/Bohr
+    opt.run(fmax=fmax, steps=args.opt_max_steps)
         
-    # auto_neb = AutoNEB(
-        
-
 
 if __name__ == "__main__":
     main()

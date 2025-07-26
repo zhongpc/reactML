@@ -5,6 +5,8 @@ from pyscf.gto import Mole
 from pyscf.grad.rhf import symmetrize
 from pyscf.lib import GradScanner
 
+from reactML.common.utils import build_dft
+
 
 class PySCFCalculator(Calculator):
     """
@@ -14,19 +16,19 @@ class PySCFCalculator(Calculator):
     """
     implemented_properties = ["energy", "forces"]
     default_parameters = {
-        "method": None,  # PySCF mean field method class
+        "method_kwargs": None,  # parameters must be JSON-serializable
     }
-    def __init__(self, **kwargs):
-        self.method = None
-        self.g_scanner: GradScanner = None
+    def __init__(self, method, **kwargs):
+        self.method = method
+        self.g_scanner: GradScanner = self.method.nuc_grad_method().as_scanner()
         Calculator.__init__(self, **kwargs)
 
     def set(self, **kwargs):
         changed_parameters = Calculator.set(self, **kwargs)
         if changed_parameters:
             self.reset()
-        if "method" in changed_parameters:
-            self.method = kwargs["method"]
+        if "method_kwargs" in changed_parameters:
+            self.method = build_dft(self.method.mol, **self.parameters["method_kwargs"])
             self.g_scanner = self.method.nuc_grad_method().as_scanner()
 
     def calculate(
