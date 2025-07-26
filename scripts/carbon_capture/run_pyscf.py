@@ -138,7 +138,7 @@ def main():
 
     mf = build_dft(mol, **vars(args))
     
-    filename = args.xyzfile.split(".", -1)[0]
+    filename = args.xyzfile.rsplit(".", 1)[0]
     # geometric optimization
     if args.opt:
         calculator = PySCFCalculator(method=mf)
