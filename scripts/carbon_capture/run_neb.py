@@ -123,7 +123,7 @@ def main():
         images.append(init_atoms.copy())
     images.append(final_atoms)
 
-    filename = args.xyzfile.split(".", -1)[0]
+    filename = args.xyzfile.rsplit(".", 1)[0]
 
     # set up the NEB
     neb = NEB(
