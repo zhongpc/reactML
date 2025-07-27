@@ -34,7 +34,7 @@ def main():
         help="Input xyz file",
     )
     parser.add_argument(
-        "--xc", "-f", type=str, default="B3LYP",
+        "--xc", type=str, default="B3LYP",
         help="Name of Exchange-Correlation Functional",
     )
     parser.add_argument(
@@ -167,7 +167,7 @@ def main():
         mf.mol.set_geom_(opt.atoms.get_positions(), unit="Angstrom")
 
     # single point calculation
-    mf.run()
+    mf.kernel()
 
     # hessian calculation
     if args.freq:
