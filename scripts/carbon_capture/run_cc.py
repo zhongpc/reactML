@@ -3,10 +3,7 @@ from typing import Tuple
 
 import numpy as np
 from pyscf import gto
-try:
-    from gpu4pyscf import cc, scf
-except:
-    from pyscf import cc, scf
+from pyscf import cc, scf
 from scipy.optimize import curve_fit
 
 
@@ -58,9 +55,7 @@ def run_hf(mol, **kwargs) -> scf.hf.SCF:
         mf = mf.density_fit(auxbasis=aux_basis)
     mf.conv_tol = kwargs.get("scf_conv", 1e-6)
     mf.max_cycle = kwargs.get("scf_max_cycle", 200)
-    # if given, use dm0 for initial density matrix
-    dm0 = kwargs.get("dm0", None)
-    mf.kernel(dm0=dm0)
+    mf.kernel()
     if not mf.converged:
         raise RuntimeError("SCF calculation did not converge")
     
@@ -179,7 +174,7 @@ def main():
     # if basis is not CBS, then we just run a single CC calculation
     if not args.cbs:
         mycc, et = run_cc(mol, **params)
-        print(f"HF Energy                : {mycc.e_hf:10.6f} a.u.")
+        print(f"HF   Energy              : {mycc.e_hf:10.6f} a.u.")
         print(f"Corr Energy              : {mycc.e_corr:10.6f} a.u.")
         print(f"CCSD Energy              : {mycc.e_tot:10.6f} a.u.")
         if args.cc == "CCSD(T)":
@@ -191,24 +186,22 @@ def main():
     basis_series = params.pop("basis")
     if args.extrapolate_hf:
         mf_dz = run_hf(mol, basis=CBS_MAP[basis_series]["dz"], **params)
-        params["dm0"] = mf_dz.make_rdm1()
     mycc_tz, et_tz = run_cc(mol, basis=CBS_MAP[basis_series]["tz"], **params)
-    params["dm0"] = mycc_tz._scf.make_rdm1()
     mycc_qz, et_qz = run_cc(mol, basis=CBS_MAP[basis_series]["qz"], **params)
 
     if args.extrapolate_hf:  # extrapolate the HF energy
         e_hf = np.array([mf_dz.e_tot, mycc_tz.e_hf, mycc_qz.e_hf])
         l = np.array([2.0, 3.0, 4.0])
         # initial guess for the parameters
-        p0 = np.array([mycc_qz.e_hf, 0.1, CBS_MAP[basis_series]["alpha"]])
+        p0 = np.array([mycc_qz.e_hf, 1.0, CBS_MAP[basis_series]["alpha"]])
         popt, _ = curve_fit(hf_cbs_model, l, e_hf, p0=p0)
         e_hf_cbs, A_fit, alpha_fit = popt
-        print(f"HF Energy DZ             : {mf_dz.e_hf:10.6f} a.u.")
-        print(f"HF Energy TZ             : {mycc_tz.e_hf:10.6f} a.u.")
-        print(f"HF Energy QZ             : {mycc_qz.e_hf:10.6f} a.u.")
-        print(f"HF Energy CBS            : {e_hf_cbs:10.6f} a.u.       (A={A_fit:.4f}, alpha={alpha_fit:.4f})")
+        print(f"HF   Energy DZ           : {mf_dz.e_tot:10.6f} a.u.")
+        print(f"HF   Energy TZ           : {mycc_tz.e_hf:10.6f} a.u.")
+        print(f"HF   Energy QZ           : {mycc_qz.e_hf:10.6f} a.u.")
+        print(f"HF   Energy CBS          : {e_hf_cbs:10.6f} a.u.       (A={A_fit:.4f}, alpha={alpha_fit:.4f})")
     else:  # use QZ HF energy as the CBS value
-        print(f"HF Energy QZ             : {mycc_qz.e_hf:10.6f} a.u.")
+        print(f"HF   Energy QZ           : {mycc_qz.e_hf:10.6f} a.u.")
         e_hf_cbs = mycc_qz.e_hf
 
     e_corr_tz = mycc_tz.e_corr + et_tz
