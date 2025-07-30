@@ -82,6 +82,9 @@ def run_cc(mol, **kwargs) -> Tuple[cc.ccsd.CCSDBase, float]:
     if density_fit:
         aux_basis = kwargs.get("aux_basis", None)
         mycc = mycc.density_fit(auxbasis=aux_basis)
+    frozen_core = kwargs.get("frozen_core", False)
+    if frozen_core:
+        mycc.set_frozen()
     mycc.conv_tol = kwargs.get("cc_conv", 1e-7)
     mycc.max_cycle = kwargs.get("cc_max_cycle", 50)
     mycc.kernel()
@@ -143,6 +146,10 @@ def main():
     parser.add_argument(
         "--aux-basis", type=str, default=None,
         help="Auxiliary basis set for density fitting (default None)",
+    )
+    parser.add_argument(
+        "--frozen-core", action="store_true",
+        help="Use frozen core approximation (default False)",
     )
     parser.add_argument(
         "--scf-conv", type=float, default=1e-6,

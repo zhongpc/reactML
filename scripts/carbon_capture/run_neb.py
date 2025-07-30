@@ -104,6 +104,11 @@ def main():
         "--opt-max-steps", type=int, default=100_000_000,
         help="Maximum number of optimization steps (default 100,000,000)",
     )
+    parser.add_argument(
+        "--save-traj", action="store_true",
+        help="Whether to save the optimization trajectory",
+    )
+
     args = parser.parse_args()
 
     # read the initial and final geometries
@@ -142,13 +147,18 @@ def main():
             image.calc = PySCFCalculator(method=mf.copy())
     
     # set up the optimizer
+    trajectory = f"{filename}_opt.traj" if args.save_traj else None
     opt = FIRE(
         neb,
-        trajectory=f"{filename}_neb.traj",
+        trajectory=trajectory,
     )
     fmax = args.opt_fmax * units.Hartree / units.Bohr  # Convert from Hartree/Bohr
     opt.run(fmax=fmax, steps=args.opt_max_steps)
-        
+    
+    # save the final images
+    images_filename = f"{filename}_neb.xyz"
+    ase.io.write(images_filename, neb.images, format="extxyz")
+
 
 if __name__ == "__main__":
     main()
