@@ -3,7 +3,7 @@ import numpy as np
 
 try:
     from gpu4pyscf import dft
-except:
+except ImportError:
     from pyscf import dft
 from pyscf import gto
 from pyscf.hessian import thermo
@@ -94,10 +94,6 @@ def main():
         help="Whether to use internal coordinates for optimization",
     )
     parser.add_argument(
-        "--calc-hessian", action="store_true",
-        help="Whether to calculate the Hessian matrix during optimization",
-    )
-    parser.add_argument(
         "--diag-every-n", type=int, default=None,
         help="Number of steps per diagonalization in optimization (default 3)",
     )
@@ -137,40 +133,29 @@ def main():
     atoms = ase.io.read(args.xyzfile, format="xyz")
 
     mf = build_dft(mol, **vars(args))
-    
+
     filename = args.xyzfile.rsplit(".", 1)[0]
-    # geometric optimization
-    if args.opt:
-        calculator = PySCFCalculator(method=mf)
-        atoms.calc = calculator
-        trajectory = f"{filename}_opt.traj" if args.save_traj else None
-        # sella_logfile = f"{filename}_sella.log" if args.save_traj else None
-        opt = Sella(
-            atoms=atoms,
-            trajectory=trajectory,
-            # logfile=sella_logfile,
-            order=0,  # 0 for minimum, 1 for saddle point
-            internal=args.internal,
-            eig=args.calc_hessian,
-            threepoint=True,
-            diag_every_n=args.diag_every_n,
-            hessian_function=lambda x: hessian_function(x, mf),
-        )
-        fmax = args.opt_fmax * units.Hartree / units.Bohr  # Convert from Hartree/Bohr
-        opt.run(fmax=fmax, steps=args.opt_max_steps)
-        # for step, _ in enumerate(opt.irun(fmax=fmax, steps=args.opt_max_steps)):
-        #     hessian = opt.pes.H
-        #     eigen_values = hessian.evals
-        #     print(f"Step {step}: Hessian eigenvalues: {eigen_values}")
-        # save the optimized geometry
-        ase.io.write(f"{filename}_opt.xyz", opt.atoms, format="xyz")
-        mf.mol.set_geom_(opt.atoms.get_positions(), unit="Angstrom")
 
-    # single point calculation
-    mf.kernel()
+    calculator = PySCFCalculator(method=mf)
+    atoms.calc = calculator
+    trajectory = f"{filename}_ts.traj" if args.save_traj else None
+    opt = Sella(
+        atoms=atoms,
+        trajectory=trajectory,
+        order=1,  # 0 for minimum, 1 for saddle point
+        internal=args.internal,
+        eig=True,
+        threepoint=True,
+        diag_every_n=args.diag_every_n,
+        hessian_function=lambda x: hessian_function(x, mf),
+    )
+    fmax = args.opt_fmax * units.Hartree / units.Bohr  # Convert to Hartree/Bohr
+    opt.run(fmax=fmax, max_steps=args.opt_max_steps)
+    ase.io.write(f"{filename}_ts.xyz", atoms, format="xyz")
 
-    # hessian calculation
     if args.freq:
+        # single point calculation
+        mf.kernel()
         if not mf.converged:
             print("Warning: SCF calculation did not converge. Don't calculate frequencies.")
             return
@@ -178,9 +163,8 @@ def main():
         freq_info = thermo.harmonic_analysis(mf.mol, hessian, imaginary_freq=False)
         # imaginary frequencies
         freq_au = freq_info["freq_au"]
-        if np.any(freq_au < 0):
-            num_imag_freq = np.sum(freq_au < 0)
-            print(f"Warning: {num_imag_freq} imaginary frequencies detected!")
+        if np.sum(freq_au < 0) > 1:
+            print("Warning: More than one imaginary frequency detected. This may indicate a transition state.")
         thermo_info = thermo.thermo(mf, freq_info["freq_au"], args.temp, args.press)
         dump_normal_mode(mf.mol, freq_info)
         thermo.dump_thermo(mf.mol, thermo_info)
@@ -192,4 +176,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
