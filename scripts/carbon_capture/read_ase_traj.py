@@ -18,7 +18,7 @@ def main():
     # Read the trajectory file
     atoms_traj = ase.io.Trajectory(args.trajfile, mode="r")
     
-    output = args.output if args.output else atoms_traj.filename.replace(".traj", ".xyz")
+    output = args.output if args.output else os.path.splitext(atoms_traj.filename)[0] + ".xyz"
 
     for i, atoms in enumerate(atoms_traj):
         if i == 0:
