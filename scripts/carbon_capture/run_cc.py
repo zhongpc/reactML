@@ -171,6 +171,10 @@ def main():
         "--extrapolate-hf", action="store_true",
         help="Whether to extrapolate HF energies for CBS calculations",
     )
+    parser.add_argument(
+        "--max-memory", type=int, default=None,
+        help="Maximum memory in GB",
+    )
     args = parser.parse_args()
 
     # read the xyz file
