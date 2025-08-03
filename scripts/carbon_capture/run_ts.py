@@ -3,7 +3,7 @@ import numpy as np
 
 try:
     from gpu4pyscf import dft
-except:
+except ImportError:
     from pyscf import dft
 from pyscf import gto
 from pyscf.hessian import thermo
