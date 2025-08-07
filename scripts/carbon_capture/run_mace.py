@@ -78,7 +78,7 @@ def main():
 
     atoms = ase.io.read(args.xyzfile, format="xyz")
     atoms.info["charge"] = args.charge
-    atoms.info["spin"] = args.spin + 1  # PySCF uses 2S, but ASE uses 2S+1
+    atoms.info["spin"] = args.spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
     atoms.calc = mace_omol(model=args.model)
     n_atoms = len(atoms)
 
