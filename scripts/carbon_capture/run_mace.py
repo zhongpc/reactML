@@ -106,7 +106,7 @@ def main():
     if args.freq:
         hessian = atoms.calc.get_hessian()
         hessian = hessian.reshape(n_atoms, 3, n_atoms, 3).transpose(0, 2, 1, 3)
-        hessian *= (units.Bohr**2 / units.Hartree)  # Convert from eV/Ang^2
+        hessian *= (units.Bohr**2 / units.Hartree)  # Convert from eV/Ang^2 to Hartree/Bohr^2
         # create a temporary Mole()
         mol = gto.M(
             atom=[(ele, coord) for ele, coord in zip(atoms.get_chemical_symbols(), atoms.get_positions())],
