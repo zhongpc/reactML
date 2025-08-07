@@ -181,7 +181,7 @@ def main():
         if np.any(freq_au < 0):
             num_imag_freq = np.sum(freq_au < 0)
             print(f"Warning: {num_imag_freq} imaginary frequencies detected!")
-        thermo_info = thermo.thermo(mf, freq_info["freq_au"], args.temp, args.press)
+        thermo_info = thermo.thermo(mf, freq_au, args.temp, args.press)
         dump_normal_mode(mf.mol, freq_info)
         thermo.dump_thermo(mf.mol, thermo_info)
 

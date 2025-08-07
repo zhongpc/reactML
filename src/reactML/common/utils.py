@@ -1,5 +1,5 @@
 import os.path as osp
-from typing import Dict
+from typing import Dict, Union
 
 import numpy as np
 from pyscf import gto, lib
@@ -32,7 +32,7 @@ def read_pcm_eps() -> Dict[str, float]:
     return eps_dict
 
 
-def build_dft(mol: gto.Mole, **kwargs) -> dft.rks.RKS | dft.uks.UKS:
+def build_dft(mol: gto.Mole, **kwargs) -> Union[dft.rks.RKS, dft.uks.UKS]:
     """
     Build a PySCF mean field object with the given molecule and parameters.
     Args:
@@ -109,6 +109,7 @@ def dump_normal_mode(mol: gto.Mole, results: Dict[str, np.ndarray]) -> None:
     """
     The function in PySCF does not dump imagnary frequencies.
     We made a custom function to dump all frequencies and normal modes.
+    And decoupled from PySCF mole for reusability.
 
     Args:
         mol (gto.Mole): The molecule object.
