@@ -109,8 +109,6 @@ def dump_normal_mode(mol: gto.Mole, results: Dict[str, np.ndarray]) -> None:
     """
     The function in PySCF does not dump imagnary frequencies.
     We made a custom function to dump all frequencies and normal modes.
-    And decoupled from PySCF mole for reusability.
-
     Args:
         mol (gto.Mole): The molecule object.
         results (Dict[str, np.ndarray]): A dictionary containing frequencies and normal modes.
