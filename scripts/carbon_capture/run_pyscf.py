@@ -1,6 +1,7 @@
 import argparse
-import numpy as np
+from typing import Union
 
+import numpy as np
 try:
     from gpu4pyscf import dft
 except:
@@ -16,7 +17,7 @@ from reactML.common.utils import build_dft, dump_normal_mode
 from reactML.common.ase_interface import PySCFCalculator
 
 
-def hessian_function(atoms: Atoms, method: dft.rks.RKS | dft.uks.UKS) -> np.ndarray:
+def hessian_function(atoms: Atoms, method: Union[dft.rks.RKS, dft.uks.UKS]) -> np.ndarray:
     """Calculate the Hessian matrix for the given atoms using the provided method."""
     method.mol.set_geom_(atoms.get_positions(), unit="Angstrom")
     method.run()

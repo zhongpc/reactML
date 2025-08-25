@@ -110,6 +110,8 @@ def main():
         # create a temporary Mole()
         mol = gto.M(
             atom=[(ele, coord) for ele, coord in zip(atoms.get_chemical_symbols(), atoms.get_positions())],
+            charge=args.charge,
+            spin=args.spin,
         )
         freq_info = thermo.harmonic_analysis(mol, hessian, imaginary_freq=False)
         # imaginary frequencies
