@@ -5,7 +5,7 @@ try:
     from gpu4pyscf import dft
 except ImportError:
     from pyscf import dft
-from pyscf import gto
+from pyscf import gto, symm
 from pyscf.hessian import thermo
 
 from ase import Atoms, units
@@ -122,10 +122,17 @@ def main():
         help="Pressure for thermodynamic analysis",
     )
     parser.add_argument(
+        "--symm-geom-tol", type=float, default=1e-5,
+        help="Symmetry geometry tolerance (default 1e-5)",
+    )
+    parser.add_argument(
         "--max-memory", type=int, default=None,
         help="Maximum memory in GB",
     )
     args = parser.parse_args()
+
+    # set symmetry tolerance
+    symm.geom.TOLERANCE = args.symm_geom_tol
 
     # read the xyz file
     mol = gto.Mole(charge=args.charge, spin=args.spin)  # mol.build() will be called in mol.fromfile
