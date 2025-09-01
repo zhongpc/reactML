@@ -6,7 +6,7 @@ from mace.calculators import mace_omol
 from ase import units
 import ase.io
 from sella import Sella
-from pyscf import gto
+from pyscf import gto, symm
 from pyscf.hessian import thermo
 
 from reactML.common.utils import dump_normal_mode
@@ -74,8 +74,15 @@ def main():
         "--press", "-p", type=float, default=101325.,
         help="Pressure for thermodynamic analysis",
     )
+    parser.add_argument(
+        "--symm-geom-tol", type=float, default=1e-5,
+        help="Symmetry geometry tolerance (default 1e-5)",
+    )
     args = parser.parse_args()
 
+    # set symmetry tolerance
+    symm.geom.TOLERANCE = args.symm_geom_tol
+    
     atoms = ase.io.read(args.xyzfile, format="xyz")
     atoms.info["charge"] = args.charge
     atoms.info["spin"] = args.spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
