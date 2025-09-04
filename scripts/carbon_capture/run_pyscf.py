@@ -127,8 +127,8 @@ def main():
         help="Pressure for thermodynamic analysis",
     )
     parser.add_argument(
-        "--symm-geom-tol", type=float, default=1e-5,
-        help="Symmetry geometry tolerance (default 1e-5)",
+        "--symm-geom-tol", type=float, default=1e-2,
+        help="Symmetry geometry tolerance (default 1e-5 Angstrom)",
     )
     parser.add_argument(
         "--max-memory", type=int, default=None,
@@ -137,7 +137,7 @@ def main():
     args = parser.parse_args()
 
     # set symmetry tolerance
-    symm.geom.TOLERANCE = args.symm_geom_tol
+    symm.geom.TOLERANCE = args.symm_geom_tol / units.Bohr  # convert to Bohr
     # read the xyz file
     mol = gto.Mole(charge=args.charge, spin=args.spin)  # mol.build() will be called in mol.fromfile
     mol.fromfile(filename=args.xyzfile)                 # we must set charge and spin before reading the file
