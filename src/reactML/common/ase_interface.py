@@ -12,7 +12,7 @@ class PySCFCalculator(Calculator):
     This calculator uses PySCF to compute the energy and forces of a system.
     It can be used with various mean field methods provided by PySCF.
     """
-    implemented_properties = ["energy", "forces", "stress", "dipole", "magmom"]
+    implemented_properties = ["energy", "forces"]
     default_parameters = {}
     def __init__(self, method, xc_3c=None, **kwargs):
         self.method = method

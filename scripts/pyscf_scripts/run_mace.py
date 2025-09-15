@@ -50,7 +50,7 @@ def main():
     n_atoms = len(atoms)
 
     # task 1: optimization
-    run_opt = config.get("opt", True)
+    run_opt = config.get("opt", False)
     if run_opt:
         # record start time
         start_time = time.time()
@@ -75,10 +75,10 @@ def main():
         )
         fmax: float = opt_config.get("fmax", 4.5e-4)
         max_steps = opt_config.get("max_steps", 1000)
-        opt_converged = sella_opt.run(fmax=fmax, max_steps=max_steps)
+        opt_converged = sella_opt.run(fmax=fmax, steps=max_steps)
         if not opt_converged:
             Warning("Optimization did not converge within the maximum number of steps.")
-        opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.yaml")
+        opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.xyz")
         ase.io.write(opt_outputfile, atoms, format="xyz")
         # record end time
         end_time = time.time()
@@ -93,7 +93,7 @@ def main():
     print(f"MACE energy  [Eh]: {energy / units.Hartree:16.10f}")
 
     # task 3: forces (gradients)
-    run_forces: bool = config.get("forces", True)
+    run_forces: bool = config.get("forces", False)
     if run_forces:
         start_time = time.time()
         forces = atoms.get_forces()
@@ -121,7 +121,7 @@ def main():
         save_hess: bool = config.get("save_hess", False)
         if save_hess:
             with h5py.File(datafile, 'a') as h5f:
-                h5f.create_dataset("hessian", data=_hessian)
+                h5f.create_dataset("hessian", data=hessian)
 
         # create a temporary Mole()
         start_time = time.time()
@@ -130,7 +130,7 @@ def main():
             charge=charge,
             spin=spin,
         )
-        freq_info = thermo.harmonic_analysis(mol, hessian, imaginary_freq=False)
+        freq_info = thermo.harmonic_analysis(mol, _hessian, imaginary_freq=False)
         # imaginary frequencies
         freq_au = freq_info["freq_au"]
         num_imag = np.sum(freq_au < 0)
