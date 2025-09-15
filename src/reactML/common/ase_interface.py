@@ -1,12 +1,10 @@
+import numpy as np
+from pyscf.gto import charge, Mole
+from pyscf.lib import GradScanner
 from ase import Atoms, units
 from ase.calculators.calculator import Calculator, all_changes
 
-from pyscf.gto import Mole
-from pyscf.grad.rhf import symmetrize
-from pyscf.lib import GradScanner
-
-from reactML.common.utils import build_dft
-
+from reactML.common.utils import get_gradient_method
 
 class PySCFCalculator(Calculator):
     """
@@ -15,21 +13,16 @@ class PySCFCalculator(Calculator):
     It can be used with various mean field methods provided by PySCF.
     """
     implemented_properties = ["energy", "forces"]
-    default_parameters = {
-        "method_kwargs": None,  # parameters must be JSON-serializable
-    }
-    def __init__(self, method, **kwargs):
+    default_parameters = {}
+    def __init__(self, method, xc_3c=None, **kwargs):
         self.method = method
-        self.g_scanner: GradScanner = self.method.nuc_grad_method().as_scanner()
+        self.g_scanner: GradScanner = get_gradient_method(self.method, xc_3c).as_scanner()
         Calculator.__init__(self, **kwargs)
 
     def set(self, **kwargs):
         changed_parameters = Calculator.set(self, **kwargs)
         if changed_parameters:
             self.reset()
-        if "method_kwargs" in changed_parameters:
-            self.method = build_dft(self.method.mol, **self.parameters["method_kwargs"])
-            self.g_scanner = self.method.nuc_grad_method().as_scanner()
 
     def calculate(
         self,
@@ -43,16 +36,18 @@ class PySCFCalculator(Calculator):
         Calculator.calculate(self, atoms, properties, system_changes)
         
         mol: Mole = self.method.mol
-        coords = atoms.get_positions()
-
-        if mol.symmetry:
-            coords = symmetrize(mol, coords)
+        positions = atoms.get_positions()
+        atomic_numbers = atoms.get_atomic_numbers()
+        Z = np.array([charge(x) for x in mol.elements])
+        if all(Z == atomic_numbers):
+            _atoms = positions
+        else:
+            _atoms = list(zip(atomic_numbers, positions))
         
-        mol.set_geom_(coords, unit="Angstrom")
+        mol.set_geom_(_atoms, unit="Angstrom")
         
         energy, gradients = self.g_scanner(mol)
 
         # store the energy and forces
-        self.results["energy"] = energy * units.Hartree  # convert energy from Hartree to eV
-        self.results["forces"] = -gradients * units.Hartree / units.Bohr  # convert forces from Hartree/Bohr to eV/Angstrom
-
+        self.results["energy"] = energy * units.Hartree
+        self.results["forces"] = -gradients * (units.Hartree / units.Bohr)
