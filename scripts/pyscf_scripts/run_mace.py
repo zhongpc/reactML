@@ -159,27 +159,31 @@ def main():
         irc_config: dict = config.get("irc_config", {})
         sella_irc = IRC(
             atoms=atoms,
-            trajectory=irc_config.get("trajectory", f"{filename}_irc.traj"),
-            step=irc_config.get("step", 0.1),
-            max_steps=irc_config.get("max_steps", 100),
-            fmax=irc_config.get("fmax", 4.5e-4),
-            internal=irc_config.get("internal", True),
-            hessian_function=lambda x: x.calc.get_hessian().reshape(n_atoms * 3, n_atoms * 3)
+            trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
+            ninner_iter=irc_config.get("ninner_iter", 10),
+            peskwargs={"threepoint": True},
+            hessian_function=lambda x: x.calc.get_hessian().reshape(n_atoms * 3, n_atoms * 3),
+            keep_going=irc_config.get("keep_going", False),
         )
         # forward direction
         fmax: float = irc_config.get("fmax", 4.5e-4)
         max_steps = irc_config.get("max_steps", 100)
-
-        irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
-        if not irc_converged:
-            Warning("Forward IRC calculation did not converge within the maximum number of steps.")
-        ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
-
+        direction: str = irc_config.get("direction", "both")
+        assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
+        # forward direction
+        if direction in ["forward", "both"]:
+            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
+            if not irc_converged:
+                Warning("Forward IRC did not converge within the maximum number of steps.")
+            ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
+        
         # reverse direction
-        irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
-        if not irc_converged:
-            Warning("Reverse IRC calculation did not converge within the maximum number of steps.")
-        ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
+        if direction in ["reverse", "both"]:
+            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
+            if not irc_converged:
+                Warning("Reverse IRC did not converge within the maximum number of steps.")
+            ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
+        
         end_time = time.time()
         print(f"IRC calculation completed in {end_time - start_time:.2f} seconds.")
 

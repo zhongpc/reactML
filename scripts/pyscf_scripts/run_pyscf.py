@@ -248,8 +248,10 @@ def main():
         sella_irc = IRC(
             atoms=atoms,
             trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
+            ninner_iter=irc_config.get("ninner_iter", 10),
             peskwargs={"threepoint": True},
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
+            keep_going=irc_config.get("keep_going", False),
         )
         fmax: float = irc_config.get("fmax", 4.5e-4)
         max_steps: int = irc_config.get("max_steps", 1000)
