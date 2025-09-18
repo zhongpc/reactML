@@ -254,19 +254,19 @@ def main():
             keep_going=irc_config.get("keep_going", False),
         )
         fmax: float = irc_config.get("fmax", 4.5e-4)
-        max_steps: int = irc_config.get("max_steps", 1000)
+        irc_steps: int = irc_config.get("irc_steps", 10)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
         # forward direction
         if direction in ["forward", "both"]:
-            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
+            irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="forward")
             if not irc_converged:
                 Warning("Forward IRC did not converge within the maximum number of steps.")
             ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
         
         # reverse direction
         if direction in ["reverse", "both"]:
-            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
+            irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="reverse")
             if not irc_converged:
                 Warning("Reverse IRC did not converge within the maximum number of steps.")
             ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
