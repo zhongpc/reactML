@@ -92,6 +92,7 @@ def main():
             trajectory=opt_config.get("trajectory", f"{filename}_opt.traj"),
             order=order,  # 0 for minimum, 1 for saddle point
             internal=opt_config.get("internal", True),
+            eta=opt_config.get("eta", 1e-4),
             eig=eig,
             threepoint=True,
             diag_every_n=opt_config.get("diag_every_n", None),
@@ -249,6 +250,7 @@ def main():
             atoms=atoms,
             trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
             ninner_iter=irc_config.get("ninner_iter", 10),
+            eta=irc_config.get("eta", 1e-4),
             peskwargs={"threepoint": True},
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
             keep_going=irc_config.get("keep_going", False),
