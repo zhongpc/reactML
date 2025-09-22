@@ -8,7 +8,7 @@ import yaml
 import h5py
 from mace.calculators import mace_omol
 from ase import units
-from sella import Sella, IRC
+from sella import Sella, IRC, Constraints
 from pyscf import gto, symm
 from pyscf.hessian import thermo
 
@@ -63,11 +63,34 @@ def main():
         else:
             eig = opt_config.get("calc_hessian", False)
             order = 0
+        # constraints
+        if "constraints" in opt_config:
+            cons = Constraints(atoms)
+            cons_dict: dict = opt_config["constraints"]
+            # bond
+            if "fix_bond" in cons_dict:
+                for bond in cons_dict["fix_bond"]:
+                    cons.fix_bond((bond[0], bond[1]))
+                print(f"Applied bond constraints: {cons_dict['fix_bond']}")
+            # angle
+            if "fix_angle" in cons_dict:
+                for angle in cons_dict["fix_angle"]:
+                    cons.fix_angle((angle[0], angle[1], angle[2]))
+                print(f"Applied angle constraints: {cons_dict['fix_angle']}")
+            # dihedral
+            if "fix_dihedral" in cons_dict:
+                for dihedral in cons_dict["fix_dihedral"]:
+                    cons.fix_dihedral((dihedral[0], dihedral[1], dihedral[2], dihedral[3]))
+                print(f"Applied dihedral constraints: {cons_dict['fix_dihedral']}")
+        else:
+            cons = None
         sella_opt = Sella(
             atoms=atoms,
             trajectory=opt_config.get("trajectory", f"{filename}_opt.traj"),
             order=order,
             internal=opt_config.get("internal", True),
+            constraints=cons,
+            constraints_tol=opt_config.get("constraints_tol", 1e-5),
             eig=eig,
             threepoint=True,
             diag_every_n=opt_config.get("diag_every_n", None),
