@@ -91,6 +91,11 @@ def main():
         if "constraints" in opt_config:
             cons = Constraints(atoms)
             cons_dict: dict = opt_config["constraints"]
+            # translation
+            if "fix_translation" in cons_dict:
+                for atom_idx in cons_dict["fix_translation"]:
+                    cons.fix_translation(atom_idx)
+                print(f"Applied translation constraints: {cons_dict['fix_translation']}")
             # bond
             if "fix_bond" in cons_dict:
                 for bond in cons_dict["fix_bond"]:
