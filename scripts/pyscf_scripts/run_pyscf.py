@@ -160,6 +160,51 @@ def main():
     if abs(e_solvent) > 1e-10:
         print(f"Solvent Energy      [Eh]: {e_solvent:16.10f}")
 
+    # properties about the wavefunction
+    dm = mf.make_rdm1()
+    if not isinstance(dm, np.ndarray):  # which means dm is cupy.array
+        dm = dm.get()  # convert cupy array to numpy array
+    mo_energy = mf.mo_energy
+    if not isinstance(mo_energy, np.ndarray):
+        mo_energy = mo_energy.get()
+    if dm.ndim == 3:  # open-shell case
+        mo_energy[0].sort()
+        mo_energy[1].sort()
+        na, nb = mf.nelec
+        print(f"LUMO Alpha [Eh]: {mo_energy[0][na]:12.6f}")
+        print(f"LUMO Beta  [Eh]: {mo_energy[1][nb]:12.6f}")
+        print(f"HOMO Alpha [Eh]: {mo_energy[0][na-1]:12.6f}")
+        print(f"HOMO Beta  [Eh]: {mo_energy[1][nb-1]:12.6f}")
+    else:  # closed-shell case
+        mo_energy.sort()
+        nocc = mf.mol.nelectron // 2
+        print(f"LUMO [Eh]: {mo_energy[nocc]:12.6f}")
+        print(f"HOMO [Eh]: {mo_energy[nocc-1]:12.6f}")
+    
+    # (optional) save RESP charges
+    run_resp: bool = config.get("resp", False)
+    if run_resp:
+        from gpu4pyscf.pop import esp
+        from reactML.common.topology import get_constraints_idx, rdkit_mol_from_pyscf
+        # stage 1: RESP fitting under weak hyperbolic penalty
+        q1 = esp.resp_solve(mf.mol, dm)
+        # stage 2: RESP fitting with constraints
+        rdkit_mol = rdkit_mol_from_pyscf(mf.mol)
+        sum_constraints_idx, equal_constraints = get_constraints_idx(rdkit_mol)
+        sum_constraints = []
+        for i in sum_constraints_idx:
+            sum_constraints.append([q1[i], [i]])
+        q2 = esp.resp_solve(
+            mf.mol, dm,
+            resp_a=1e-3,
+            sum_constraints=sum_constraints,
+            equal_constraints=equal_constraints,
+        )
+        # print RESP charges
+        print("RESP charges [e]:")
+        for i, charge in enumerate(q2):
+            print(f"{i+1:3d} {charge:12.6f}")
+
     # (optional) save density
     save_dm: bool = config.get("save_dm", False)
     if save_dm:
@@ -185,27 +230,6 @@ def main():
     # if not converged, skip the following tasks
     if not mf.converged:
         return
-
-    # properties about the wavefunction
-    dm = mf.make_rdm1()
-    if not isinstance(dm, np.ndarray):  # which means dm is cupy.array
-        dm = dm.get()  # convert cupy array to numpy array
-    mo_energy = mf.mo_energy
-    if not isinstance(mo_energy, np.ndarray):
-        mo_energy = mo_energy.get()
-    if dm.ndim == 3:  # open-shell case
-        mo_energy[0].sort()
-        mo_energy[1].sort()
-        na, nb = mf.nelec
-        print(f"LUMO Alpha [Eh]: {mo_energy[0][na]:12.6f}")
-        print(f"LUMO Beta  [Eh]: {mo_energy[1][nb]:12.6f}")
-        print(f"HOMO Alpha [Eh]: {mo_energy[0][na-1]:12.6f}")
-        print(f"HOMO Beta  [Eh]: {mo_energy[1][nb-1]:12.6f}")
-    else:  # closed-shell case
-        mo_energy.sort()
-        nocc = mf.mol.nelectron // 2
-        print(f"LUMO [Eh]: {mo_energy[nocc]:12.6f}")
-        print(f"HOMO [Eh]: {mo_energy[nocc-1]:12.6f}")
 
     # task 3: forces (gradients)
     run_forces: bool = config.get("forces", False)
