@@ -19,9 +19,16 @@ def rdkit_mol_from_pyscf(pyscf_mol: gto.Mole) -> Chem.Mol:
         atom = pyscf_mol.atom_symbol(i)
         x, y, z = pyscf_mol.atom_coord(i, unit="Angstrom")
         xyz_str += f"{atom} {x:.6f} {y:.6f} {z:.6f}\n"
-    rdkit_mol = Chem.MolFromXYZBlock(xyz_str)
-    # add topology
-    rdDetermineBonds.DetermineBonds(rdkit_mol)
+    try:  # use rdkit to parse xyz
+        rdkit_mol = Chem.MolFromXYZBlock(xyz_str)
+        rdDetermineBonds.DetermineBonds(rdkit_mol)
+    except:  # use openbabel to parse xyz
+        from openbabel import pybel
+        # convert xyz string to sdf string
+        pybel_mol = pybel.readstring("xyz", xyz_str)
+        sdf_str = pybel_mol.write("sdf")
+        # convert sdf string to rdkit mol
+        rdkit_mol = Chem.MolFromMolBlock(sdf_str, sanitize=False, removeHs=False)
     return rdkit_mol
 
 
@@ -80,16 +87,19 @@ if __name__ == "__main__":
     # Example usage
     pyscf_mol = gto.Mole()
     pyscf_mol.atom = """
-  C    0.0000000   -0.0000000   -0.7218894
-  O    0.0000000    1.1191118    0.0073889
-  C   -0.0000000    0.7709575    1.3372793
-  C   -0.0000000   -0.7709575    1.3372793
-  O   -0.0000000   -1.1191118    0.0073889
-  O    0.0000000   -0.0000000   -1.9416719
-  H   -0.9123465    1.1712556    1.8293877
-  H    0.9123465    1.1712556    1.8293877
-  H   -0.9123465   -1.1712556    1.8293877
-  H    0.9123465   -1.1712556    1.8293877"""
+        P      -0.226615845101806      1.101045500529010      1.838347275521550
+        F      -0.757400148995978      2.599747311280309      1.709453825294907
+        F       0.411909839529254     -0.425302759247673      1.989450298417653
+        F      -1.690834277636804      0.484450909757044      1.695093923199597
+        F      -0.376160913208060      1.155914905887633      3.436973498718262
+        F       1.330298410281703      1.656559699579542      2.003825461677867
+        O      -0.066247400632948      1.041706954284057      0.153485262615070
+        O       0.751539726396582      0.693593208840418     -1.860377911358127
+        C       0.923841015496014      0.609857145107110     -0.628201012218462
+        O       2.005440080608129      0.129584142765855     -0.145710916291551
+        Li      2.487677478734471     -0.074568743072396     -2.009812614959682
+        Li      2.278642034529441     -0.003998275710907      1.663602909382929
+    """
     pyscf_mol.basis = "sto-3g"
     pyscf_mol.build()
 

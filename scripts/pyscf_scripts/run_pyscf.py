@@ -7,6 +7,7 @@ import yaml
 import h5py
 from pyscf import symm, scf
 from pyscf.hessian import thermo
+from pyscf.tools import finite_diff
 from ase import Atoms, units
 from sella import Sella, IRC, Constraints
 
@@ -252,12 +253,20 @@ def main():
     
     # task 4: vibrational frequency analysis
     run_freq = config.get("freq", False)
+    freq_config = config.get("freq_config", {})
     if run_freq:
         # calculation Hessian matrix
         start_time = time.time()
-        h = get_Hessian_method(mf, xc_3c=xc_3c)
-        h.auxbasis_response = 2
-        hessian = h.kernel()
+        numerical = freq_config.get("numerical", False)
+        if numerical:
+            displacement = float(freq_config.get("displacement", 1e-3))
+            h = finite_diff.Hessian(get_gradient_method(mf, xc_3c=xc_3c))
+            h.displacement = displacement
+            hessian = h.kernel()
+        else:
+            h = get_Hessian_method(mf, xc_3c=xc_3c)
+            h.auxbasis_response = 2
+            hessian = h.kernel()
         end_time = time.time()
         print(f"Hessian calculation completed in {end_time - start_time:.2f} seconds.")
         
@@ -278,8 +287,8 @@ def main():
         num_imag = np.sum(freq_au < 0)
         if num_imag > 0:
             print(f"Note: {num_imag} imaginary frequencies detected!")
-        temp = config.get("temp", 298.15)
-        press = config.get("press", 1.0)
+        temp = freq_config.get("temp", 298.15)
+        press = freq_config.get("press", 1.0)
         thermo_info = thermo.thermo(mf, freq_au, temp, press)
         end_time = time.time()
         print(f"Vibrational frequency analysis completed in {end_time - start_time:.2f} seconds.")
@@ -302,12 +311,12 @@ def main():
             atoms=atoms,
             trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
             ninner_iter=irc_config.get("ninner_iter", 10),
-            eta=irc_config.get("eta", 1e-4),
+            eta=float(irc_config.get("eta", 1e-4)),
             peskwargs={"threepoint": True},
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
             keep_going=irc_config.get("keep_going", False),
         )
-        fmax: float = irc_config.get("fmax", 4.5e-4)
+        fmax: float = float(irc_config.get("fmax", 4.5e-4))
         irc_steps: int = irc_config.get("irc_steps", 10)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
