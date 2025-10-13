@@ -41,7 +41,7 @@ def main():
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
     
     # load MACE model
-    atoms = ase.io.read(inputfile, format="xyz")
+    atoms = ase.io.read(inputfile)
     charge = config.get("charge", 0)
     spin = config.get("spin", 0)
     atoms.info["charge"] = charge
@@ -134,6 +134,7 @@ def main():
         if save_forces:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("forces", data=forces)
+                h5f.create_dataset("forces_unit", data="eV/Ang")
 
     # task 4: vibrational frequency analysis
     run_freq: bool = config.get("freq", False)
@@ -142,13 +143,15 @@ def main():
         hessian = atoms.calc.get_hessian().reshape(n_atoms * 3, n_atoms * 3)
         end_time = time.time()
         print(f"Hessian prediction completed in {end_time - start_time:.2f} seconds.")
-        
-        _hessian = hessian.reshape(n_atoms, 3, n_atoms, 3).transpose(0, 2, 1, 3)
-        _hessian *= (units.Bohr**2 / units.Hartree)  # Convert from eV/Ang^2 to Hartree/Bohr^2
         save_hess: bool = config.get("save_hess", False)
         if save_hess:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("hessian", data=hessian)
+                h5f.create_dataset("hessian_unit", data="eV/Ang^2")
+        
+        # convert hessian to Hartree/Bohr^2
+        _hessian = hessian.reshape(n_atoms, 3, n_atoms, 3).transpose(0, 2, 1, 3)
+        _hessian *= (units.Bohr**2 / units.Hartree)  # Convert from eV/Ang^2 to Hartree/Bohr^2
 
         # create a temporary Mole()
         start_time = time.time()
@@ -176,7 +179,8 @@ def main():
         save_freq: bool = config.get("save_freq", False)
         if save_freq:
             with h5py.File(datafile, 'a') as h5f:
-                h5f.create_dataset("frequencies", data=freq_au)
+                h5f.create_dataset("freq_wavenumber", data=freq_info["freq_wavenumber"])
+                h5f.create_dataset("freq_wavenumber_unit", data="cm^-1")
                 h5f.create_dataset("normal_modes", data=freq_info["normal_modes"])
 
     # task 5: IRC

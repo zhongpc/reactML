@@ -7,7 +7,6 @@ import yaml
 import h5py
 from pyscf import symm, scf
 from pyscf.hessian import thermo
-from pyscf.tools import finite_diff
 from ase import Atoms, units
 from sella import Sella, IRC, Constraints
 
@@ -121,7 +120,9 @@ def main():
             internal=opt_config.get("internal", True),
             constraints=cons,
             constraints_tol=opt_config.get("constraints_tol", 1e-5),
-            eta=opt_config.get("eta", 1e-4),
+            delta0=opt_config.get("delta0", None),
+            eta=float(opt_config.get("eta", 1e-4)),
+            gamma=float(opt_config.get("gamma", 0.1)),
             eig=eig,
             threepoint=True,
             diag_every_n=opt_config.get("diag_every_n", None),
@@ -243,13 +244,14 @@ def main():
         end_time = time.time()
         print(f"Force calculation completed in {end_time - start_time:.2f} seconds.")
         print(f"Forces  [Eh/Bohr]:")
-        elements = mf.mol.elements()
+        elements = mf.mol.elements
         for i, (ele, force) in enumerate(zip(elements, forces)):
             print(f"{i+1:3d} {ele:2s} {force[0]:12.6f} {force[1]:12.6f} {force[2]:12.6f}")
         save_forces = config.get("save_forces", False)
         if save_forces:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("forces", data=forces)
+                h5f.create_dataset("forces_unit", data="Eh/Bohr")
     
     # task 4: vibrational frequency analysis
     run_freq = config.get("freq", False)
@@ -259,6 +261,10 @@ def main():
         start_time = time.time()
         numerical = freq_config.get("numerical", False)
         if numerical:
+            try:
+                from reactML.common import finite_diff_gpu as finite_diff
+            except ImportError:
+                from pyscf.tools import finite_diff
             displacement = float(freq_config.get("displacement", 1e-3))
             h = finite_diff.Hessian(get_gradient_method(mf, xc_3c=xc_3c))
             h.displacement = displacement
@@ -278,6 +284,7 @@ def main():
         if save_hess:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("hessian", data=hessian)
+                h5f.create_dataset("hessian_unit", data="Eh/Bohr^2")
 
         # vibrational analysis
         start_time = time.time()
@@ -300,6 +307,7 @@ def main():
         if save_freq:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("freq_wavenumber", data=freq_info["freq_wavenumber"])
+                h5f.create_dataset("freq_wavenumber_unit", data="cm^-1")
                 h5f.create_dataset("norm_mode", data=freq_info["norm_mode"])
     
     # task 5: IRC
