@@ -128,11 +128,38 @@ def main():
             diag_every_n=opt_config.get("diag_every_n", None),
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
         )
-        fmax: float = opt_config.get("fmax", 4.5e-4)
+        energy_criteria = opt_config.get("energy", 1e-6) * units.Hartree
+        fmax_criteria = float(opt_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
+        frms_criteria = float(opt_config.get("frms", 3.0e-4)) * units.Hartree / units.Bohr
+        dmax_criteria = float(opt_config.get("dmax", 1.8e-3))
+        drms_criteria = float(opt_config.get("drms", 1.2e-3))
         max_steps: int = opt_config.get("max_steps", 1000)
-        opt_converged = sella_opt.run(fmax=fmax, steps=max_steps)
-        if not opt_converged:
+        last_pos = atoms.get_positions().copy()
+        last_energy = np.inf
+        for i in sella_opt.irun(fmax=0, steps=max_steps):
+            delta_pos = np.linalg.norm(atoms.get_positions() - last_pos, axis=1)
+            delta_energy = abs(atoms.get_potential_energy() - last_energy)
+            fmax = np.max(np.abs(atoms.get_forces()))
+            frms = np.sqrt(np.mean(atoms.get_forces()**2))
+            dmax = np.max(delta_pos)
+            drms = np.sqrt(np.mean(delta_pos**2))
+            if (delta_energy < energy_criteria and
+                fmax < fmax_criteria and
+                frms < frms_criteria and
+                dmax < dmax_criteria and
+                drms < drms_criteria):
+                print("Optimization converged based on given criteria.")
+                break
+            last_pos = atoms.get_positions().copy()
+            last_energy = atoms.get_potential_energy()
+        else:
             Warning("Optimization did not converge within the maximum number of steps.")
+            print(f"Final Energy Change   : {delta_energy:.6e} Eh")
+            print(f"Final MAX force       : {fmax * units.Bohr / units.Hartree:.6e} Eh/Bohr")
+            print(f"Final RMS force       : {frms * units.Bohr / units.Hartree:.6e} Eh/Bohr")
+            print(f"Final MAX displacement: {dmax:.6e} Angstrom")
+            print(f"Final RMS displacement: {drms:.6e} Angstrom")
+        # save final structure
         opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.xyz")
         ase.io.write(opt_outputfile, atoms, format="xyz")
         # record end time
@@ -205,7 +232,7 @@ def main():
         # print RESP charges
         print("RESP charges [e]:")
         for i, charge in enumerate(q2):
-            print(f"{i+1:3d} {charge:12.6f}")
+            print(f"{i+1:3d} {charge:16.10f}")
 
     # (optional) save density
     save_dm: bool = config.get("save_dm", False)
@@ -324,7 +351,7 @@ def main():
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
             keep_going=irc_config.get("keep_going", False),
         )
-        fmax: float = float(irc_config.get("fmax", 4.5e-4))
+        fmax: float = float(irc_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         irc_steps: int = irc_config.get("irc_steps", 10)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."

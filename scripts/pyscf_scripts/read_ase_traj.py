@@ -20,13 +20,13 @@ def main():
     atoms_traj = ase.io.Trajectory(args.trajfile, mode="r")
     
     output = args.output if args.output else os.path.splitext(atoms_traj.filename)[0] + ".xyz"
-
+    columns = ['symbols', 'positions', 'forces']
     for i, atoms in enumerate(atoms_traj):
         if i == 0:
             # Write the first frame to the output file
-            ase.io.write(output, atoms, format="extxyz", append=False)
+            ase.io.write(output, atoms, format="extxyz", append=False, columns=columns)
         else:  # Append subsequent frames
-            ase.io.write(output, atoms, format="extxyz", append=True)
+            ase.io.write(output, atoms, format="extxyz", append=True, columns=columns)
 
 
 if __name__ == "__main__":
