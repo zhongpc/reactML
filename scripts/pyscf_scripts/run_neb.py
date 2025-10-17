@@ -85,6 +85,14 @@ def main():
     images_filename = f"{filename}_neb.xyz"
     ase.io.write(images_filename, neb.images, format="extxyz")
 
+    # judge if there is a potential transition state
+    energies = np.array([image.get_potential_energy() for image in neb.images])
+    max_energy_index = np.argmax(energies)
+    if 0 < max_energy_index < len(neb.images) - 1:
+        print(f"Potential transition state found at image {max_energy_index} with energy {energies[max_energy_index]:.6f} eV.")
+        ase.io.write(f"{filename}_ts.xyz", neb.images[max_energy_index])
+    else:
+        print("There might be no transition state along the NEB path.")
 
 if __name__ == "__main__":
     main()
