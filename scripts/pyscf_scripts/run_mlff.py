@@ -6,7 +6,7 @@ import numpy as np
 import ase.io
 import yaml
 import h5py
-from mace.calculators import mace_omol
+import torch
 from ase import units
 from sella import Sella, IRC, Constraints
 from pyscf import gto, symm
@@ -46,7 +46,30 @@ def main():
     spin = config.get("spin", 0)
     atoms.info["charge"] = charge
     atoms.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
-    atoms.calc = mace_omol(model=config.get("model", "default"))
+    
+    mlip: str = config.get("mlip", "mace")
+    device: str = config.get("device", None)
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"No device specified. Using device: {device}")
+    precision: str = config.get("precision", "float64")
+    if mlip.lower() == "mace":
+        from mace.calculators import mace_omol
+        atoms.calc = mace_omol(
+            model=config.get("model", "default"),
+            device=device,
+            default_dtype=precision,
+        )
+    elif mlip.lower() == "orb":
+        from orb_models.forcefield import pretrained
+        from orb_models.forcefield.calculator import ORBCalculator
+        orbff = pretrained.orb_v3_conservative_omol(
+            device=device,
+            precision=precision,
+        )
+        atoms.calc = ORBCalculator(orbff, device=device)
+    else:
+        raise ValueError(f"Unsupported MLIP model: {mlip}")
     n_atoms = len(atoms)
 
     # task 1: optimization

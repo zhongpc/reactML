@@ -40,8 +40,8 @@ def main():
 
     # build method
     # replace inputfile
-    ase.io.write(f"{filename}_init.xyz", init_atoms, format="extxyz")
-    config["inputfile"] = f"{filename}_init.xyz"
+    input_atoms_list = [(ele, coord) for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
+    config["inputfile"] = input_atoms_list  # fake inputfile but input list
     if "xc" in config and config["xc"].endswith("3c"):
         xc_3c = config["xc"]
         mf = build_3c_method(config)
