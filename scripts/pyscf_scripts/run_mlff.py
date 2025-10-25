@@ -3,6 +3,7 @@ import time
 from types import SimpleNamespace
 
 import numpy as np
+import ase
 import ase.io
 import yaml
 import h5py
@@ -13,6 +14,50 @@ from pyscf import gto, symm
 from pyscf.hessian import thermo
 
 from reactML.common.utils import dump_normal_mode
+
+
+def compute_mlff_hessian(positions: torch.Tensor, forces: torch.Tensor) -> torch.Tensor:
+    """Compute the Hessian matrix using autograd in PyTorch.
+
+    Args:
+        positions (torch.Tensor): Atomic positions with shape (N, 3).
+        forces (torch.Tensor): Forces with shape (N, 3).
+
+    Returns:
+        torch.Tensor: Hessian matrix with shape (3N, 3N).
+    """
+    forces_flat = forces.view(-1)
+    n_hess_elements = forces_flat.shape[0]  # 3N
+
+    def get_vjp(v):
+        return torch.autograd.grad(
+            outputs=-forces_flat,
+            inputs=positions,
+            grad_outputs=v,
+            retain_graph=True,
+            create_graph=False,
+            allow_unused=False,
+        )
+    I_N = torch.eye(n_hess_elements, device=positions.device, dtype=positions.dtype)
+    try:
+        chunk_size = 1 if n_hess_elements < 64 else 16
+        hessian = torch.vmap(get_vjp, in_dims=0, out_dims=0, chunk_size=chunk_size)(I_N)[0]
+    except RuntimeError:
+        hessian = []
+        for grad_elem in forces_flat:
+            hess_row = torch.autograd.grad(
+                outputs=-grad_elem,
+                inputs=positions,
+                grad_outputs=torch.ones_like(grad_elem),
+                retain_graph=True,
+                create_graph=False,
+                allow_unused=False,
+            )[0]
+            hess_row = hess_row.detach()
+            hessian.append(hess_row)
+        hessian = torch.stack(hessian)
+    hessian = hessian.view(n_hess_elements, n_hess_elements)
+    return hessian
 
 
 def main():
@@ -39,8 +84,8 @@ def main():
     # set symmetry tolerance (hardcoded in Angstrom)
     if "symm_geom_tol" in config:
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
-    
-    # load MACE model
+
+    # load atoms
     atoms = ase.io.read(inputfile)
     charge = config.get("charge", 0)
     spin = config.get("spin", 0)
@@ -55,19 +100,41 @@ def main():
     precision: str = config.get("precision", "float64")
     if mlip.lower() == "mace":
         from mace.calculators import mace_omol
-        atoms.calc = mace_omol(
+        mace_calc = mace_omol(
             model=config.get("model", "default"),
             device=device,
             default_dtype=precision,
         )
+        atoms.calc = mace_calc
+        hessian_function = lambda x: mace_calc.get_hessian(x).reshape(len(x) * 3, len(x) * 3)
     elif mlip.lower() == "orb":
         from orb_models.forcefield import pretrained
         from orb_models.forcefield.calculator import ORBCalculator
+        from orb_models.forcefield.atomic_system import ase_atoms_to_atom_graphs
         orbff = pretrained.orb_v3_conservative_omol(
             device=device,
             precision=precision,
+            compile=False,
         )
-        atoms.calc = ORBCalculator(orbff, device=device)
+        orb_calc = ORBCalculator(orbff, device=device)
+        atoms.calc = orb_calc
+        def orb_hessian_function(atoms):
+            batch = ase_atoms_to_atom_graphs(
+                atoms,
+                system_config=orb_calc.system_config,
+                max_num_neighbors=orb_calc.max_num_neighbors,
+                edge_method=orb_calc.edge_method,
+                half_supercell=orb_calc.half_supercell,
+                device=orb_calc.device,
+            )
+            batch = batch.to(orb_calc.device)
+            positions = batch.node_features["positions"]
+            orbff.training = True
+            forces = orbff(batch)["grad_forces"]
+            hessian = compute_mlff_hessian(positions, forces)
+            orbff.training = False
+            return hessian.cpu().numpy()
+        hessian_function = orb_hessian_function
     else:
         raise ValueError(f"Unsupported MLIP model: {mlip}")
     n_atoms = len(atoms)
@@ -121,7 +188,7 @@ def main():
             eig=eig,
             threepoint=True,
             diag_every_n=opt_config.get("diag_every_n", None),
-            hessian_function=lambda x: x.calc.get_hessian().reshape(n_atoms * 3, n_atoms * 3)
+            hessian_function=hessian_function,
         )
         energy_criteria = opt_config.get("energy", 1e-6) * units.Hartree
         fmax_criteria = float(opt_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
@@ -166,8 +233,8 @@ def main():
     energy = atoms.get_potential_energy()
     end_time = time.time()
     print(f"Energy prediction completed in {end_time - start_time:.2f} seconds.")
-    print(f"MACE energy  [eV]: {energy:16.10f}")
-    print(f"MACE energy  [Eh]: {energy / units.Hartree:16.10f}")
+    print(f"MLFF energy  [eV]: {energy:16.10f}")
+    print(f"MLFF energy  [Eh]: {energy / units.Hartree:16.10f}")
 
     # task 3: forces (gradients)
     run_forces: bool = config.get("forces", False)
@@ -176,7 +243,7 @@ def main():
         forces = atoms.get_forces()
         end_time = time.time()
         print(f"Forces prediction completed in {end_time - start_time:.2f} seconds.")
-        print("MACE forces [eV/Ang]:")
+        print("MLFF forces [eV/Ang]:")
         elements = atoms.get_chemical_symbols()
         for i, (ele, force) in enumerate(zip(elements, forces)):
             print(f"{i+1:3d} {ele:2s} {force[0]:12.6f} {force[1]:12.6f} {force[2]:12.6f}")
@@ -190,7 +257,7 @@ def main():
     run_freq: bool = config.get("freq", False)
     if run_freq:
         start_time = time.time()
-        hessian = atoms.calc.get_hessian().reshape(n_atoms * 3, n_atoms * 3)
+        hessian = hessian_function(atoms)
         end_time = time.time()
         print(f"Hessian prediction completed in {end_time - start_time:.2f} seconds.")
         save_hess: bool = config.get("save_hess", False)
@@ -243,7 +310,7 @@ def main():
             trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
             ninner_iter=irc_config.get("ninner_iter", 10),
             peskwargs={"threepoint": True},
-            hessian_function=lambda x: x.calc.get_hessian().reshape(n_atoms * 3, n_atoms * 3),
+            hessian_function=hessian_function,
             keep_going=irc_config.get("keep_going", False),
         )
         # forward direction
