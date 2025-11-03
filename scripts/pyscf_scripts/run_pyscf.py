@@ -82,10 +82,10 @@ def main():
         opt_config: dict = config.get("opt_config", {})
         optts: bool = opt_config.get("ts", False)
         if optts:
-            eig = opt_config.get("calc_hessian", True)
+            eig = opt_config.get("calc_hess", True)
             order = 1
         else:
-            eig = opt_config.get("calc_hessian", False)
+            eig = opt_config.get("calc_hess", False)
             order = 0
         # constraints
         if "constraints" in opt_config:
@@ -119,7 +119,7 @@ def main():
             order=order,  # 0 for minimum, 1 for saddle point
             internal=opt_config.get("internal", True),
             constraints=cons,
-            constraints_tol=opt_config.get("constraints_tol", 1e-5),
+            constraints_tol=float(opt_config.get("constraints_tol", 1e-5)),
             delta0=opt_config.get("delta0", None),
             eta=float(opt_config.get("eta", 1e-4)),
             gamma=float(opt_config.get("gamma", 0.1)),
@@ -128,7 +128,7 @@ def main():
             diag_every_n=opt_config.get("diag_every_n", None),
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
         )
-        energy_criteria = opt_config.get("energy", 1e-6) * units.Hartree
+        energy_criteria = float(opt_config.get("energy", 1e-6)) * units.Hartree
         fmax_criteria = float(opt_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         frms_criteria = float(opt_config.get("frms", 3.0e-4)) * units.Hartree / units.Bohr
         dmax_criteria = float(opt_config.get("dmax", 1.8e-3))

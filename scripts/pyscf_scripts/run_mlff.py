@@ -1,4 +1,5 @@
 import argparse
+import os
 import time
 from types import SimpleNamespace
 
@@ -101,7 +102,7 @@ def main():
     if mlip.lower() == "mace":
         from mace.calculators import mace_omol
         mace_calc = mace_omol(
-            model=config.get("model", "default"),
+            model=config["model"],
             device=device,
             default_dtype=precision,
         )
@@ -135,6 +136,43 @@ def main():
             orbff.training = False
             return hessian.cpu().numpy()
         hessian_function = orb_hessian_function
+    elif mlip.lower() == "uma":
+        from fairchem.core import FAIRChemCalculator, pretrained_mlip
+        from fairchem.core.datasets import data_list_collater
+        from omegaconf import OmegaConf
+        model: str = config["model"]
+        atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
+        predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
+        # predictor = pretrained_mlip.get_predict_unit(model, device=device, cache_dir="/home/users/nus/zhongpc/scratch/models/uma")
+        uma_calc = FAIRChemCalculator(predictor, task_name="omol")
+        atoms.calc = uma_calc
+        def uma_hess_function(atoms: ase.Atoms):
+            eps = 5e-3
+            data_list = []
+            for i in range(len(atoms)):
+                for j in range(3):
+                    displaced_plus = atoms.copy()
+                    displaced_minus = atoms.copy()
+                    displaced_plus.positions[i, j] += eps
+                    displaced_minus.positions[i, j] -= eps
+                    data_plus = uma_calc.a2g(displaced_plus)
+                    data_minus = uma_calc.a2g(displaced_minus)
+                    data_list.extend([data_plus, data_minus])
+            # batch and predict
+            batch = data_list_collater(data_list, otf_graph=True)
+            pred = predictor.predict(batch)
+            forces = pred["forces"].reshape(-1, len(atoms), 3)
+            # calculated hessian using finite differences
+            hessian = np.zeros((len(atoms) * 3, len(atoms) * 3))
+            for i in range(len(atoms)):
+                for j in range(3):
+                    idx = i * 3 + j
+                    forces_plus = forces[2 * idx].flatten().detach().cpu().numpy()
+                    forces_minus = forces[2 * idx + 1].flatten().detach().cpu().numpy()
+                    hessian[:, idx] = (forces_minus - forces_plus) / (2 * eps) # forces is the negative graidents
+            return hessian
+
+        hessian_function = uma_hess_function
     else:
         raise ValueError(f"Unsupported MLIP model: {mlip}")
     n_atoms = len(atoms)
@@ -148,10 +186,10 @@ def main():
         opt_config: dict = config.get("opt_config", {})
         optts: bool = opt_config.get("ts", False)
         if optts:
-            eig = opt_config.get("calc_hessian", True)
+            eig = opt_config.get("calc_hess", True)
             order = 1
         else:
-            eig = opt_config.get("calc_hessian", False)
+            eig = opt_config.get("calc_hess", False)
             order = 0
         # constraints
         if "constraints" in opt_config:
@@ -184,7 +222,10 @@ def main():
             order=order,
             internal=opt_config.get("internal", True),
             constraints=cons,
-            constraints_tol=opt_config.get("constraints_tol", 1e-5),
+            constraints_tol=float(opt_config.get("constraints_tol", 1e-5)),
+            delta0=opt_config.get("delta0", None),
+            eta=float(opt_config.get("eta", 1e-4)),
+            gamma=float(opt_config.get("gamma", 0.1)),
             eig=eig,
             threepoint=True,
             diag_every_n=opt_config.get("diag_every_n", None),
