@@ -78,7 +78,7 @@ def main():
         trajectory=trajectory,
     )
     fmax = config.get("fmax", 0.05)  # in eV/Angstrom
-    steps = config.get("neb_max_steps", 100)
+    steps = config.get("neb_max_steps", 1000)
     opt.run(fmax=fmax, steps=steps)
 
     # save the final images
