@@ -351,17 +351,23 @@ def main():
             atoms=atoms,
             trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
             ninner_iter=irc_config.get("ninner_iter", 10),
+            dx=float(irc_config.get("dx", 0.1)),
+            eta=float(irc_config.get("eta", 1e-4)),
             peskwargs={"threepoint": True},
-            hessian_function=hessian_function,
             keep_going=irc_config.get("keep_going", False),
+            diag_every_n=irc_config.get("diag_every_n", None),
+            hessian_function=hessian_function,
         )
-        # forward direction
         fmax: float = irc_config.get("fmax", 4.5e-4) * units.Hartree / units.Bohr
         max_steps = irc_config.get("max_steps", 100)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
+
         # forward direction
+        # record the initial position
+        pos_init = atoms.get_positions().copy()
         if direction in ["forward", "both"]:
+            print("Starting forward IRC")
             irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
             if not irc_converged:
                 Warning("Forward IRC did not converge within the maximum number of steps.")
@@ -369,6 +375,10 @@ def main():
         
         # reverse direction
         if direction in ["reverse", "both"]:
+            print("Starting reverse IRC")
+            # reset to initial position
+            sella_irc.v0ts = None
+            atoms.set_positions(pos_init)
             irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
             if not irc_converged:
                 Warning("Reverse IRC did not converge within the maximum number of steps.")
