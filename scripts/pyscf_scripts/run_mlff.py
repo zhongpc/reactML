@@ -228,6 +228,7 @@ def main():
             gamma=float(opt_config.get("gamma", 0.1)),
             eig=eig,
             threepoint=True,
+            nsteps_per_diag=opt_config.get("nsteps_per_diag", 3),
             diag_every_n=opt_config.get("diag_every_n", None),
             hessian_function=hessian_function,
         )
