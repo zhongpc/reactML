@@ -119,6 +119,7 @@ def main():
         )
         orb_calc = ORBCalculator(orbff, device=device)
         atoms.calc = orb_calc
+
         def orb_hessian_function(atoms):
             batch = ase_atoms_to_atom_graphs(
                 atoms,
@@ -135,6 +136,7 @@ def main():
             hessian = compute_mlff_hessian(positions, forces)
             orbff.training = False
             return hessian.cpu().numpy()
+
         hessian_function = orb_hessian_function
     elif mlip.lower() == "uma":
         from fairchem.core import FAIRChemCalculator, pretrained_mlip
@@ -146,6 +148,8 @@ def main():
         # predictor = pretrained_mlip.get_predict_unit(model, device=device, cache_dir="/home/users/nus/zhongpc/scratch/models/uma")
         uma_calc = FAIRChemCalculator(predictor, task_name="omol")
         atoms.calc = uma_calc
+        batch_size = config.get("batch_size", 128)
+
         def uma_hess_function(atoms: ase.Atoms):
             eps = 5e-3
             data_list = []
@@ -159,16 +163,24 @@ def main():
                     data_minus = uma_calc.a2g(displaced_minus)
                     data_list.extend([data_plus, data_minus])
             # batch and predict
-            batch = data_list_collater(data_list, otf_graph=True)
-            pred = predictor.predict(batch)
-            forces = pred["forces"].reshape(-1, len(atoms), 3)
+            forces_list = []
+            for i in range(0, len(data_list), batch_size):
+                if i + batch_size > len(data_list):
+                    data_list_batch = data_list[i:]
+                else:
+                    data_list_batch = data_list[i:i+batch_size]
+                batch = data_list_collater(data_list_batch, otf_graph=True)
+                pred = predictor.predict(batch)
+                batch_forces = pred["forces"].detach()
+                forces_list.append(batch_forces)
+            forces = torch.cat(forces_list, dim=0).reshape(-1, len(atoms), 3)
             # calculated hessian using finite differences
             hessian = np.zeros((len(atoms) * 3, len(atoms) * 3))
             for i in range(len(atoms)):
                 for j in range(3):
                     idx = i * 3 + j
-                    forces_plus = forces[2 * idx].flatten().detach().cpu().numpy()
-                    forces_minus = forces[2 * idx + 1].flatten().detach().cpu().numpy()
+                    forces_plus = forces[2 * idx].flatten().cpu().numpy()
+                    forces_minus = forces[2 * idx + 1].flatten().cpu().numpy()
                     hessian[:, idx] = (forces_minus - forces_plus) / (2 * eps) # forces is the negative graidents
             return hessian
 
