@@ -29,16 +29,21 @@ def read_db_json(file_path):
     return data
 
 
-def instance_mongodb(config):
+def instance_mongodb(config: Dict) -> pymongo.database.Database:
     """Create an instance of mongodb from reading the yaml config."""
+    # set default login info to None
+    host = config.get("host", None)
+    username = config.get("username", None)
+    password = config.get("password", None)
+    authSource = config.get("authSource", "admin")
     client = pymongo.MongoClient(
-        host = config["host"],
-        username= config["username"], 
-        password = config["password"], 
-        authSource = config["authSource"], 
+        host=host,
+        username=username, 
+        password=password, 
+        authSource=authSource, 
     )
-    db = client[config["database"]]
-
+    database_name = config["database"]
+    db = client[database_name]
     return db
 
 
