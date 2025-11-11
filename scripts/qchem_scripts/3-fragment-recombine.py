@@ -1,6 +1,6 @@
 import yaml
 
-from reactML.crn_utils.fragmentation_recombination import FragmentReconnect, get_all_molecule_from_json
+from reactML.crn_utils.frag_recomb import FragmentReconnect, get_all_molecule_from_json
 from reactML.crn_utils.utils import instance_mongodb
 
 

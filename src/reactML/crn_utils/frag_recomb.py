@@ -15,15 +15,12 @@ from pymatgen.analysis.fragmenter import Fragmenter
 from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.analysis.local_env import OpenBabelNN
 from monty.serialization import loadfn
-from ase import io as ase_io
-from ase import data as ase_data
+import ase.io
+import ase.data
+from ase import Atoms
 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-class FragmentReconnect:
+class FragmentationRecombination:
 
     MAX_ELECTRONS = 180
     MAX_BONDS = {"C": 4, "P": 5, "S": 6, "O": 2, "N": 3, "B": 5, "Cl": 1, "F": 1}
@@ -32,7 +29,6 @@ class FragmentReconnect:
 
     def __init__(
         self,
-        initial_graphs_collection: pymongo.collection.Collection,
         mol_list: List[Molecule],
         groupname: str = "default_group",
         depth: int = 1,
@@ -40,6 +36,7 @@ class FragmentReconnect:
         bonding_factor_min: float = 0.5,
         n_bonding_factors: int = 10,
         n_angles: int = 100,
+        db_collection: Optional[pymongo.collection.Collection] = None,
         **kwargs: Any,
     ):
         """
@@ -53,14 +50,13 @@ class FragmentReconnect:
         self.bonding_factor_min = bonding_factor_min
         self.n_bonding_factors = n_bonding_factors
         self.n_angles = n_angles
-        self.initial_graphs_collection = initial_graphs_collection
+        self.db_collection = db_collection
 
         self.DEBUG = kwargs.get("debug", False)
-
-        self.output_folder = kwargs.get(
-            "output_folder", os.path.join("outputs", "initial_structures")
+        self.output_dir = kwargs.get(
+            "output_dir", os.path.join("outputs", "initial_structures")
         )
-        os.makedirs(self.output_folder, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
         self.db_graphs: List[MoleculeGraph] = []
         self.frag_graphs: List[MoleculeGraph] = []
         self.connecting_indices: List[List[int]] = []
@@ -78,19 +74,25 @@ class FragmentReconnect:
         self.fragment()
         # self.recombine()
 
+
     def _get_graphs_from_db(self) -> None:
         """Get the graphs already in the database."""
+        if self.db_collection is None:
+            logging.info("No database collection provided, skipping loading existing graphs")
+            return
         self.db_graphs = []
-        group_collection = self.initial_graphs_collection.find({"tags.group": self.groupname})
+        group_collection = self.db_collection.find({"tags.group": self.groupname})
         for graph in group_collection:
             graph.pop("tags")
             mol_graph = MoleculeGraph.from_dict(graph)
             self.db_graphs.append(mol_graph)
-        logger.info(f"Loaded {len(self.db_graphs)} graphs from the database")
+        logging.info(f"Loaded {len(self.db_graphs)} graphs from the database")
 
 
     def _exists_in_db(self, molgraph: MoleculeGraph) -> bool:
         """Check if the molecule graph is already in the database."""
+        if not self.db_graphs:
+            return False
         for db_graph in self.db_graphs:
             # first, check isomorphism
             if not molgraph.isomorphic_to(db_graph):
@@ -116,14 +118,19 @@ class FragmentReconnect:
         format: str = "xyz",
     ) -> None:
         """Store fragments as xyz files."""
-        atoms_list = [AseAtomsAdaptor.get_atoms(frag_graph.molecule) for frag_graph in frag_graphs]
-        ase_io.write(
-            filename=os.path.join(self.output_folder, f"{label}.{format}"),
+        atoms_list = []
+        for frag_graph in frag_graphs:
+            atoms: Atoms = AseAtomsAdaptor.get_atoms(frag_graph.molecule)
+            atoms.info["charge"] = int(frag_graph.molecule.charge)
+            atoms.info["multiplicity"] = int(frag_graph.molecule.spin_multiplicity)
+            atoms_list.append(atoms)
+        ase.io.write(
+            filename=os.path.join(self.output_dir, f"{label}.{format}"),
             images=atoms_list,
-            format=format,
+            # format=format,
         )
 
-    def fragment(self, add_monoatomic: bool = False):
+    def fragment(self, add_monoatomic: bool = False) -> None:
         """        
         Generate fragments for all molecules in the list.
         Args:
@@ -137,7 +144,7 @@ class FragmentReconnect:
         for idx, molecule in enumerate(self.mol_list):
             # monoatomic species
             if add_monoatomic and len(molecule) == 1:
-                logger.info(f"Adding monoatomic species for molecule {idx}")
+                logging.info(f"Adding monoatomic species for molecule {idx}")
                 molgraph = MoleculeGraph.with_local_env_strategy(molecule, strategy=OpenBabelNN())
                 tags = {
                     "group": self.groupname,
@@ -153,9 +160,9 @@ class FragmentReconnect:
                 self.connecting_indices.append([0])
             # fragment larger molecules
             else:
-                logger.info(f"Fragmenting molecule {idx} with formula {molecule.formula} up to depth {self.depth}")
+                logging.info(f"Fragmenting molecule {idx} with formula {molecule.formula} up to depth {self.depth}")
                 fragmenter = Fragmenter(molecule, depth=self.depth, open_rings=True)
-                logger.info(f"Number of fragments: {fragmenter.total_unique_fragments}")
+                logging.info(f"Number of fragments: {fragmenter.total_unique_fragments}")
 
                 for key, frag_graphs in fragmenter.unique_frag_dict.items():
                     label = "fragments_" + "_".join(key.split())
@@ -175,9 +182,9 @@ class FragmentReconnect:
                         }
                         self._append_graph_to_db(frag_graph, tags)
         if self.DEBUG:
-            logger.debug(f"Number of fragment graphs: {len(self.frag_graphs)}")
-            logger.debug(f"Number of connecting indices: {len(self.connecting_indices)}")
-            logger.debug(f"Connecting indices: {self.connecting_indices}")
+            logging.debug(f"Number of fragment graphs: {len(self.frag_graphs)}")
+            logging.debug(f"Number of connecting indices: {len(self.connecting_indices)}")
+            logging.debug(f"Connecting indices: {self.connecting_indices}")
 
 
     def _generate_connected_sites(self, frag_graph: MoleculeGraph) -> List[int]:
@@ -198,19 +205,19 @@ class FragmentReconnect:
 
     def _append_graph_to_db(self, molgraph: MoleculeGraph, tags: dict) -> None:
         """Put the structure in the initial structure database."""
-
-        if self._exists_in_db(molgraph):
-            logger.warning("Structure already present in database")
-            return
-
         if self.DEBUG:
-            logger.debug("Debug calculation, not storing molecule in database")
+            logging.debug("Debug mode: not adding to database")
             return
-
+        if self.db_collection is None:
+            logging.info("No database collection provided, skipping adding to database")
+            return
+        if self._exists_in_db(molgraph):
+            logging.warning("Structure already present in database")
+            return
         molgraph_dict = molgraph.as_dict()
         serialize_molecule_graph(molgraph_dict)
         molgraph_dict["tags"] = tags
-        self.initial_graphs_collection.insert_one(molgraph_dict)
+        self.db_collection.insert_one(molgraph_dict)
 
 
     def _has_valid_tot_charge(self, frag_graph1: MoleculeGraph, frag_graph2: MoleculeGraph) -> bool:
@@ -232,7 +239,7 @@ class FragmentReconnect:
         """Check if the number of electrons exceeds our computational capacity."""
         molecule1: Molecule = frag_graph1.molecule
         molecule2: Molecule = frag_graph2.molecule
-        tot_electrons = molecule1._nelectrons + molecule2._nelectrons
+        tot_electrons = molecule1.nelectrons + molecule2.nelectrons
         if tot_electrons < self.MAX_ELECTRONS:
             logging.debug(f"Electrons {tot_electrons} is accepted")
             return True
@@ -327,26 +334,25 @@ class FragmentReconnect:
                             # "connecting_atoms_frag2": heavy_atoms_sites2,
                             "idx2_connecting_atoms": site2,
                         }
-
                         self._append_graph_to_db(combined_mol_graph, tags)
 
                         # The total number of recombinations
                         n_accepted += 1
 
-        logger.info(f"Total number of recombinations: {n_tot}")
-        logger.info(
+        logging.info(f"Total number of recombinations: {n_tot}")
+        logging.info(
             f"Accepted number of recombinations: {n_accepted}"
         )
 
     def vdw_radii(self, symbol: str) -> float:
         """Repurpose ASEs van der Waals radii."""
-        atomic_number = ase_data.atomic_numbers[symbol]
-        return ase_data.vdw_radii[atomic_number]
+        atomic_number = ase.data.atomic_numbers[symbol]
+        return ase.data.vdw_radii[atomic_number]
 
     def covalent_radii(self, symbol: str) -> float:
         """Repurpose ASEs covalent radii."""
-        atomic_number = ase_data.atomic_numbers[symbol]
-        return ase_data.covalent_radii[atomic_number]
+        atomic_number = ase.data.atomic_numbers[symbol]
+        return ase.data.covalent_radii[atomic_number]
 
     def _is_overlapped(
         self,
@@ -366,17 +372,17 @@ class FragmentReconnect:
         species1 = [a.symbol for a in species1]
         species2 = [a.symbol for a in species2]
 
-        # generate the sum over vdW radii matrix
+        # generate the sum over covalent radii matrix
         dist_matrix = cdist(positions1, positions2)
-        vdw_radii1 = np.array([self.vdw_radii(s) for s in species1])
-        vdw_radii2 = np.array([self.vdw_radii(s) for s in species2])
-        radii_matrix = vdw_radii1[:, np.newaxis] + vdw_radii2[np.newaxis, :]
+        covalent_radii1 = np.array([self.covalent_radii(s) for s in species1])
+        covalent_radii2 = np.array([self.covalent_radii(s) for s in species2])
+        radii_matrix = covalent_radii1[:, np.newaxis] + covalent_radii2[np.newaxis, :]
         # this is the bond between the two atoms, divide by bonding factor
         if connected_sites is not None:
             i, j = connected_sites
             radii_matrix[i, j] /= bonding_factor 
 
-        # if the distance is smaller than the sum of the vdw radii, there is an overlap
+        # if the distance is smaller than the sum of the covalent radii, there is an overlap
         if np.any(dist_matrix < radii_matrix):
             return True
 
@@ -498,7 +504,7 @@ class FragmentReconnect:
 
             # generate the second molecule at the correct distance and angle
             # unit vector from center of molecule 1 to its connecting site
-            vec_center_to_site1 = mol_copy1.center_of_mass() - mol_copy1[site1].coords
+            vec_center_to_site1 = mol_copy1.center_of_mass - mol_copy1[site1].coords
             # in case the two atoms are at the same position, set an arbitrary vector
             length_vec = np.linalg.norm(vec_center_to_site1)
             if length_vec < 1e-6:
@@ -507,7 +513,7 @@ class FragmentReconnect:
                 vec_unit = vec_center_to_site1 / np.linalg.norm(vec_center_to_site1)
             translate_vec = (
                 -np.array(molecule2[site2].coords)
-                + (sum_radii / bonding_factor + self.delta_distance) * vec_unit
+                + (sum_radii * bonding_factor + self.delta_distance) * vec_unit
             )
             frag_copy2 = copy.deepcopy(frag_graph2)
             mol_copy2: Molecule = frag_copy2.molecule
@@ -578,9 +584,8 @@ class FragmentReconnect:
         else:
             # No operation worked, write out the intermediate molecules
             label = "failed_" + label
-            # TODO: I don't know the meaning of storing intermediate molecules here
-            # self.save_fragments(label, intermediate_molecules, format="xyz")
-            logger.warning(
+            self.save_fragments(label, intermediate_molecules, format="xyz")
+            logging.warning(
                 f"Could not find a rotation angle that minimizes overlap for {label}"
             )
             return
@@ -604,7 +609,7 @@ class FragmentReconnect:
 
 
 def get_molecule_list_from_LIBE(
-    libe_ids, db, output_folder: str = "outputs"
+    libe_ids, db, output_dir: str = "outputs"
 ) -> List[Molecule]:
     """Generate a list of Molecules based on the LIBE IDs."""
 
@@ -618,7 +623,7 @@ def get_molecule_list_from_LIBE(
         molecule = Molecule.from_dict(result["molecule"])
         molecule_list.append(molecule)
         # Write the molecule to a file
-        molecule.to(filename=os.path.join(output_folder, f"{clean_libe_id}.xyz"))
+        molecule.to(filename=os.path.join(output_dir, f"{clean_libe_id}.xyz"))
 
     return molecule_list
 
