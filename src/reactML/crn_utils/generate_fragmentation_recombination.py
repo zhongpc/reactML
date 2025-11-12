@@ -2,7 +2,7 @@ import argparse
 
 # from instance_mongodb import instance_mongodb_sei
 
-from reactML.crn_utils.frag_recomb import FragmentationRecombination, get_molecule_from_json, FragmentReconnect
+from reactML.crn_utils.frag_recombine import FragmentationRecombination, get_molecule_from_json
 
 
 def parse_cli():
