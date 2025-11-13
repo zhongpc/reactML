@@ -403,8 +403,11 @@ class FragmentationRecombination:
             avg_dist = 0.0
 
             # generate the second molecule at the correct distance and angle
-            # unit vector from center of molecule 1 to its connecting site
-            vec_center_to_site1 = mol_copy1[site1].coords - mol_copy1.center_of_mass
+            # get the neighbors of the site1
+            site1_neighbors: List[ConnectedSite] = frag_copy1.get_connected_sites(site1)
+            # center of its neighbors
+            neighbors_pos = np.concatenate([neighbor.site.coords for neighbor in site1_neighbors])
+            vec_center_to_site1 = mol_copy1[site1].coords - neighbors_pos.mean(axis=0)
             # in case the two atoms are at the same position, set an arbitrary vector
             length_vec = np.linalg.norm(vec_center_to_site1)
             if length_vec < 1e-6:
