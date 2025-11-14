@@ -162,7 +162,7 @@ def main():
             print(f"Final RMS displacement: {drms:.6e} Angstrom")
         # save final structure
         opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.xyz")
-        ase.io.write(opt_outputfile, atoms, format="xyz")
+        ase.io.write(opt_outputfile, atoms)
         # record end time
         end_time = time.time()
         print(f"Optimization completed in {end_time - start_time:.2f} seconds.")
