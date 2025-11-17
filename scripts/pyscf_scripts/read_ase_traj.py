@@ -23,8 +23,6 @@ def main():
     for i, atoms in enumerate(atoms_traj):
         append = i > 0
         if "forces" in atoms.arrays or "forces" in atoms.calc.results:
-            print(atoms.arrays)
-            print(atoms.calc.results)
             columns = ['symbols', 'positions', 'forces']
         else:
             columns = ['symbols', 'positions']
