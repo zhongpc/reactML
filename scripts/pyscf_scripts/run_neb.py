@@ -78,7 +78,7 @@ def main():
         trajectory=trajectory,
     )
     fmax = config.get("fmax", 0.05)  # in eV/Angstrom
-    steps = config.get("neb_max_steps", 100)
+    steps = config.get("neb_max_steps", 1000)
     opt.run(fmax=fmax, steps=steps)
 
     # save the final images
@@ -87,12 +87,17 @@ def main():
 
     # judge if there is a potential transition state
     energies = np.array([image.get_potential_energy() for image in neb.images])
-    max_energy_index = np.argmax(energies)
-    if 0 < max_energy_index < len(neb.images) - 1:
-        print(f"Potential transition state found at image {max_energy_index} with energy {energies[max_energy_index]:.6f} eV.")
-        ase.io.write(f"{filename}_ts.xyz", neb.images[max_energy_index])
+    # the energy is high than both neighbors
+    atoms_list = []
+    for i in range(1, len(energies) - 1):
+        if energies[i] > energies[i - 1] and energies[i] > energies[i + 1]:
+            print(f"Potential transition state found at image {i} with energy {energies[i]:.6f} eV.")
+            atoms_list.append(neb.images[i])
+    if atoms_list:
+        ase.io.write(f"{filename}_ts.xyz", atoms_list)
     else:
         print("There might be no transition state along the NEB path.")
+
 
 if __name__ == "__main__":
     main()

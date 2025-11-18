@@ -119,6 +119,7 @@ def main():
         )
         orb_calc = ORBCalculator(orbff, device=device)
         atoms.calc = orb_calc
+
         def orb_hessian_function(atoms):
             batch = ase_atoms_to_atom_graphs(
                 atoms,
@@ -135,6 +136,7 @@ def main():
             hessian = compute_mlff_hessian(positions, forces)
             orbff.training = False
             return hessian.cpu().numpy()
+
         hessian_function = orb_hessian_function
     elif mlip.lower() == "uma":
         from fairchem.core import FAIRChemCalculator, pretrained_mlip
@@ -146,6 +148,8 @@ def main():
         # predictor = pretrained_mlip.get_predict_unit(model, device=device, cache_dir="/home/users/nus/zhongpc/scratch/models/uma")
         uma_calc = FAIRChemCalculator(predictor, task_name="omol")
         atoms.calc = uma_calc
+        batch_size = config.get("batch_size", 128)
+
         def uma_hess_function(atoms: ase.Atoms):
             eps = 5e-3
             data_list = []
@@ -159,16 +163,24 @@ def main():
                     data_minus = uma_calc.a2g(displaced_minus)
                     data_list.extend([data_plus, data_minus])
             # batch and predict
-            batch = data_list_collater(data_list, otf_graph=True)
-            pred = predictor.predict(batch)
-            forces = pred["forces"].reshape(-1, len(atoms), 3)
+            forces_list = []
+            for i in range(0, len(data_list), batch_size):
+                if i + batch_size > len(data_list):
+                    data_list_batch = data_list[i:]
+                else:
+                    data_list_batch = data_list[i:i+batch_size]
+                batch = data_list_collater(data_list_batch, otf_graph=True)
+                pred = predictor.predict(batch)
+                batch_forces = pred["forces"].detach()
+                forces_list.append(batch_forces)
+            forces = torch.cat(forces_list, dim=0).reshape(-1, len(atoms), 3)
             # calculated hessian using finite differences
             hessian = np.zeros((len(atoms) * 3, len(atoms) * 3))
             for i in range(len(atoms)):
                 for j in range(3):
                     idx = i * 3 + j
-                    forces_plus = forces[2 * idx].flatten().detach().cpu().numpy()
-                    forces_minus = forces[2 * idx + 1].flatten().detach().cpu().numpy()
+                    forces_plus = forces[2 * idx].flatten().cpu().numpy()
+                    forces_minus = forces[2 * idx + 1].flatten().cpu().numpy()
                     hessian[:, idx] = (forces_minus - forces_plus) / (2 * eps) # forces is the negative graidents
             return hessian
 
@@ -228,6 +240,7 @@ def main():
             gamma=float(opt_config.get("gamma", 0.1)),
             eig=eig,
             threepoint=True,
+            nsteps_per_diag=opt_config.get("nsteps_per_diag", 3),
             diag_every_n=opt_config.get("diag_every_n", None),
             hessian_function=hessian_function,
         )
@@ -350,17 +363,23 @@ def main():
             atoms=atoms,
             trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
             ninner_iter=irc_config.get("ninner_iter", 10),
+            dx=float(irc_config.get("dx", 0.1)),
+            eta=float(irc_config.get("eta", 1e-4)),
             peskwargs={"threepoint": True},
-            hessian_function=hessian_function,
             keep_going=irc_config.get("keep_going", False),
+            diag_every_n=irc_config.get("diag_every_n", None),
+            hessian_function=hessian_function,
         )
-        # forward direction
         fmax: float = irc_config.get("fmax", 4.5e-4) * units.Hartree / units.Bohr
         max_steps = irc_config.get("max_steps", 100)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
+
         # forward direction
+        # record the initial position
+        pos_init = atoms.get_positions().copy()
         if direction in ["forward", "both"]:
+            print("Starting forward IRC")
             irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
             if not irc_converged:
                 Warning("Forward IRC did not converge within the maximum number of steps.")
@@ -368,6 +387,10 @@ def main():
         
         # reverse direction
         if direction in ["reverse", "both"]:
+            print("Starting reverse IRC")
+            # reset to initial position
+            sella_irc.v0ts = None
+            atoms.set_positions(pos_init)
             irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
             if not irc_converged:
                 Warning("Reverse IRC did not converge within the maximum number of steps.")

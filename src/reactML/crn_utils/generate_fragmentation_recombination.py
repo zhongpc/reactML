@@ -1,8 +1,8 @@
 import argparse
 
-from instance_mongodb import instance_mongodb_sei
+# from instance_mongodb import instance_mongodb_sei
 
-from fragmentation_recombination import get_molecule_from_json, FragmentReconnect
+from reactML.crn_utils.frag_recombine import FragmentationRecombination, get_molecule_from_json
 
 
 def parse_cli():
@@ -51,9 +51,8 @@ if __name__ == "__main__":
     # Generate a molecule list
     molecule_list = get_molecule_from_json(args.libe_ids, args.json_filename)
 
-    fragmenter = FragmentReconnect(
-        initial_graphs_collection=initial_graphs_collection,
-        molecule_list=molecule_list,
+    fragmenter = FragmentationRecombination(
+        mol_list=molecule_list,
         depth=args.depth,
         bonding_factor_max=1.5,
         bonding_factor_min=1,

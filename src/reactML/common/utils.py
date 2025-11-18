@@ -6,17 +6,6 @@ import numpy as np
 from pyscf import gto, lib, dft
 
 
-def write_xyz(mol: gto.Mole, filename: str) -> None:
-    elements = mol.elements
-    coords = mol.atom_coords(unit="Angstrom")
-    with open(filename, "w") as f:
-        f.write(f"{len(elements)}\n")
-        # Convert spin (2S) to multiplicity (2S+1) format, as required by quantum chemistry conventions.
-        f.write(f"{mol.charge} {mol.spin + 1}\n")
-        for ele, coord in zip(elements, coords):
-            f.write(f"{ele: <2}    {coord[0]:10.6f}    {coord[1]:10.6f}    {coord[2]:10.6f}\n")
-
-
 def read_pcm_eps() -> Dict[str, float]:
     # from https://gaussian.com/scrf/
     pcm_eps_txt = os.path.join(os.path.dirname(__file__), "pcm_eps.txt")
