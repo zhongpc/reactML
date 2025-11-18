@@ -406,14 +406,14 @@ class FragmentationRecombination:
             # get the neighbors of the site1
             site1_neighbors: List[ConnectedSite] = frag_copy1.get_connected_sites(site1)
             # center of its neighbors
-            neighbors_pos = np.concatenate([neighbor.site.coords for neighbor in site1_neighbors])
-            vec_center_to_site1 = mol_copy1[site1].coords - neighbors_pos.mean(axis=0)
-            # in case the two atoms are at the same position, set an arbitrary vector
-            length_vec = np.linalg.norm(vec_center_to_site1)
-            if length_vec < 1e-6:
-                vec_unit = np.array([1.0, 0.0, 0.0])
+            if len(site1_neighbors) == 0:
+                vec_center_to_site1 = np.random.rand(3)
+            elif len(site1_neighbors) == 1:
+                vec_center_to_site1 = mol_copy1[site1].coords - site1_neighbors[0].site.coords
             else:
-                vec_unit = vec_center_to_site1 / np.linalg.norm(vec_center_to_site1)
+                neighbors_pos = np.concatenate([neighbor.site.coords for neighbor in site1_neighbors])
+                vec_center_to_site1 = mol_copy1[site1].coords - neighbors_pos.mean(axis=0)
+            vec_unit = vec_center_to_site1 / np.linalg.norm(vec_center_to_site1)
             translate_vec = (
                 -np.array(molecule2[site2].coords)
                 + (sum_radii * bonding_scale) * vec_unit
