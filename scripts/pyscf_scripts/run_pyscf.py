@@ -46,6 +46,7 @@ def main():
     inputfile: str = config.get("inputfile", "mol.xyz")
     filename = inputfile.rsplit('.', 1)[0]
     datafile: str = config.get("datafile", f"{filename}_data.h5")
+    with_gpu = config.get("with_gpu", False)
     # empty datafile if save anything
     for key in config:
         if isinstance(key, str) and key.startswith("save_") and config[key]:
@@ -63,10 +64,6 @@ def main():
     else:
         xc_3c = None
         mf = build_method(config)
-    
-    use_newton = config.get("newton", False)
-    if use_newton:
-        mf = mf.newton()
     
     # set calculator
     calc = PySCFCalculator(mf, xc_3c=xc_3c)
@@ -170,6 +167,12 @@ def main():
     # task 2: single point energy
     start_time = time.time()
     e_tot = mf.kernel()
+    use_soscf = config.get("soscf", False)
+    if not mf.converged and use_soscf:
+        mo_init = mf.mo_coeff
+        mocc_init = mf.mo_occ
+        mf = mf.newton()
+        e_tot = mf.kernel(mo_coeff=mo_init, mo_occ=mocc_init)
     if not mf.converged:
         Warning("SCF calculation did not converge.")
     e1 = mf.scf_summary.get("e1", 0.0)
@@ -289,9 +292,9 @@ def main():
         start_time = time.time()
         numerical = freq_config.get("numerical", False)
         if numerical:
-            try:
+            if with_gpu:
                 from reactML.common import finite_diff_gpu as finite_diff
-            except ImportError:
+            else:
                 from pyscf.tools import finite_diff
             displacement = float(freq_config.get("displacement", 1e-3))
             h = finite_diff.Hessian(get_gradient_method(mf, xc_3c=xc_3c))
