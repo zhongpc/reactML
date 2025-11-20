@@ -14,9 +14,10 @@ class PySCFCalculator(Calculator):
     """
     implemented_properties = ["energy", "forces"]
     default_parameters = {}
-    def __init__(self, method, xc_3c=None, **kwargs):
+    def __init__(self, method, xc_3c=None, soscf=False, **kwargs):
         self.method = method
         self.g_scanner: GradScanner = get_gradient_method(self.method, xc_3c).as_scanner()
+        self.soscf = soscf
         Calculator.__init__(self, **kwargs)
 
     def set(self, **kwargs):
@@ -47,7 +48,12 @@ class PySCFCalculator(Calculator):
         mol.set_geom_(_atoms, unit="Angstrom")
         
         energy, gradients = self.g_scanner(mol)
-
+        if not self.g_scanner.converged and self.soscf:
+            # try SOSCF if not converged
+            newton_method = self.method.newton()
+            newton_method.kernel()
+            energy, gradients = self.g_scanner(mol)
+        
         # store the energy and forces
         self.results["energy"] = energy * units.Hartree
         self.results["forces"] = -gradients * (units.Hartree / units.Bohr)

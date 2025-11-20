@@ -64,9 +64,10 @@ def main():
     else:
         xc_3c = None
         mf = build_method(config)
-    
+
     # set calculator
-    calc = PySCFCalculator(mf, xc_3c=xc_3c)
+    use_soscf = config.get("soscf", False)
+    calc = PySCFCalculator(mf, xc_3c=xc_3c, soscf=use_soscf)
     atoms = ase.io.read(config["inputfile"])
     atoms.calc = calc
 
@@ -167,7 +168,6 @@ def main():
     # task 2: single point energy
     start_time = time.time()
     e_tot = mf.kernel()
-    use_soscf = config.get("soscf", False)
     if not mf.converged and use_soscf:
         mo_init = mf.mo_coeff
         mocc_init = mf.mo_occ

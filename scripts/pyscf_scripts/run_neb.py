@@ -65,11 +65,9 @@ def main():
     neb.interpolate(config.get("interpolate_method", "linear"))
 
     # set up calculators
-    for i, image in enumerate(neb.images):
-        if i == 0:
-            image.calc = PySCFCalculator(mf, xc_3c=xc_3c)
-        else:
-            image.calc = PySCFCalculator(mf, xc_3c=xc_3c)
+    use_soscf = config.get("soscf", False)
+    for image in neb.images:
+        image.calc = PySCFCalculator(mf, xc_3c=xc_3c, soscf=use_soscf)
 
     # set up the optimizer
     trajectory = config.get("trajectory", f"{filename}_neb.traj")

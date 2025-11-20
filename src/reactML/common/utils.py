@@ -1,6 +1,6 @@
 import os
 from types import MethodType
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 from pyscf import gto, lib, dft
@@ -175,11 +175,12 @@ def build_method(config: dict):
 
 def build_3c_method(config: dict):
     """
-    Special cases for 3c methods, e.g., B97-3c
+    Special cases for 3c methods, e.g., B973c
     """
-    xc = config.get("xc", "B97-3c")
+    xc: str = config.get("xc", "B973c")
     if not xc.endswith("3c"):
-        raise ValueError("The xc functional must be a 3c method, e.g., B97-3c.")
+        raise ValueError("The xc functional must be a 3c method, e.g., B973c.")
+    xc = xc.replace("-3c", "3c")
     from gpu4pyscf.drivers.dft_3c_driver import parse_3c, gen_disp_fun
     
     # modify config dictionary
@@ -199,7 +200,7 @@ def build_3c_method(config: dict):
     return mf
 
 
-def get_gradient_method(mf, xc_3c=None):
+def get_gradient_method(mf, xc_3c: Optional[str] = None):
     """
     Get the gradient method from a mean field object.
     Args:
@@ -211,6 +212,7 @@ def get_gradient_method(mf, xc_3c=None):
     if xc_3c is not None:
         if not xc_3c.endswith("3c"):
             raise ValueError("The xc functional must be a 3c method, e.g., B97-3c.")
+        xc_3c = xc_3c.replace("-3c", "3c")
         from gpu4pyscf.drivers.dft_3c_driver import parse_3c, gen_disp_grad_fun
         _, _, _, _, (xc_disp, disp), xc_gcp = parse_3c(xc_3c.lower())
         g = mf.nuc_grad_method()
