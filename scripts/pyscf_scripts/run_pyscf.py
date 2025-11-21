@@ -127,6 +127,8 @@ def main():
             diag_every_n=opt_config.get("diag_every_n", None),
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
         )
+        max_unconverged_steps = opt_config.get("max_unconverged_steps", None)
+        atoms.calc.set_max_unconverged_steps(max_unconverged_steps)
         energy_criteria = float(opt_config.get("energy", 1e-6)) * units.Hartree
         fmax_criteria = float(opt_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         frms_criteria = float(opt_config.get("frms", 3.0e-4)) * units.Hartree / units.Bohr
@@ -357,6 +359,8 @@ def main():
             diag_every_n=irc_config.get("diag_every_n", None),
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
         )
+        max_unconverged_steps = irc_config.get("max_unconverged_steps", None)
+        atoms.calc.set_max_unconverged_steps(max_unconverged_steps)
         fmax: float = float(irc_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         irc_steps: int = irc_config.get("irc_steps", 10)
         direction: str = irc_config.get("direction", "both")

@@ -66,8 +66,11 @@ def main():
 
     # set up calculators
     use_soscf = config.get("soscf", False)
+    max_unconverged_steps = config.get("max_unconverged_steps", None)
     for image in neb.images:
-        image.calc = PySCFCalculator(mf, xc_3c=xc_3c, soscf=use_soscf)
+        image.calc = PySCFCalculator(
+            mf, xc_3c=xc_3c, soscf=use_soscf, max_unconverged_steps=max_unconverged_steps
+        )
 
     # set up the optimizer
     trajectory = config.get("trajectory", f"{filename}_neb.traj")
