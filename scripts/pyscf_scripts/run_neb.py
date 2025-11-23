@@ -4,7 +4,7 @@ import numpy as np
 import ase.io
 import yaml
 from pyscf import symm
-from ase.mep import NEB, AutoNEB
+from ase.mep import NEB
 from ase.optimize import FIRE
 from ase import units
 
