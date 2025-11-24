@@ -6,6 +6,8 @@ import ase.io
 from pyscf import symm
 from ase import Atoms
 from ase import units
+from ase.optimize import FIRE
+from ase.units import Hartree, Bohr
 from pyGSM.level_of_theories.ase import ASELoT
 from pyGSM.potential_energy_surfaces import PES
 from pyGSM.utilities.elements import ElementData
@@ -48,16 +50,59 @@ def main():
     # replace inputfile
     input_atoms_list = [(ele, coord) for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
     config["inputfile"] = input_atoms_list  # fake inputfile but input list
-    if "xc" in config and config["xc"].endswith("3c"):
-        xc_3c = config["xc"]
-        mf = build_3c_method(config)
+    if "mlip" in config:
+        assert "xc" not in config, "Please do not specify 'xc' when using MLIP."
+        charge = config.get("charge", 0)
+        spin = config.get("spin", 0)
+        for atoms in [init_atoms, final_atoms]:
+            atoms.info["charge"] = charge
+            atoms.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
+        if config["mlip"] == "uma":
+            from fairchem.core import FAIRChemCalculator, pretrained_mlip
+            from omegaconf import OmegaConf
+            device: str = config.get("device", None)
+            model: str = config["model"]
+            task: str = config.get("task", "omol")
+            atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
+            predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
+            calc = FAIRChemCalculator(predictor, task=task)
+        else:
+            raise NotImplementedError(f"Unknown MLIP: {config['mlip']}")
+    elif "xc" in config:
+        assert "mlip" not in config, "Please do not specify 'mlip' when using DFT."
+        if config["xc"].endswith("3c"):
+            xc_3c = config["xc"]
+            mf = build_3c_method(config)
+        else:
+            xc_3c = None
+            mf = build_method(config)
+        use_soscf: bool = config.get("soscf", False)
+        max_unconverged_steps: int = config.get("max_unconverged_steps", None)
+        calc = PySCFCalculator(
+            method=mf, xc_3c=xc_3c, soscf=use_soscf,
+            max_unconverged_steps=max_unconverged_steps
+        )
     else:
-        xc_3c = None
-        mf = build_method(config)
-    calc = PySCFCalculator(mf=mf, xc_3c=xc_3c)
+        raise ValueError("Please specify either 'mlip' or 'xc' in the config file.")
+
+    opt_terminal = config.get("opt_terminal", True)
+    fmax = float(config.get("fmax", 0.05))  # in eV/Angstrom
+    conv_gmax = fmax * Hartree / Bohr  # convert to Hartree/Bohr
+    if opt_terminal:
+        init_atoms.calc = calc
+        final_atoms.calc = calc
+        print("Optimizing the initial structure.")
+        with FIRE(init_atoms) as opt0:
+            opt0.run(fmax=fmax)
+        print("Optimizing the final structure.")
+        with FIRE(final_atoms) as opt1:
+            opt1.run(fmax=fmax)
+        del opt0, opt1
 
     # set level of theory
-    lot = ASELoT.from_options(calculator=calc, geom=input_atoms_list, ID=0)
+    ID = config.get("task_id", 0)
+    input_geom = [[ele, *coord] for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
+    lot = ASELoT.from_options(calculator=calc, geom=input_geom, ID=ID)
     # set potential energy surface
     pes = PES.from_options(lot=lot, ad_idx=0)
     # build the topology
@@ -82,7 +127,8 @@ def main():
         else:
             topo_react.add_edge(bond[0], bond[1])
     # build primitive internal coordinates
-    coordinate_type = config.get("coordinate_type", "TRIC")
+    coordinate_type: str = config.get("coordinate_type", "TRIC")
+    coordinate_type = coordinate_type.upper()
     prim_react: PrimitiveInternalCoordinates = PrimitiveInternalCoordinates.from_options(
         xyz=init_atoms.positions,
         atoms=elements,
@@ -114,32 +160,37 @@ def main():
 
     # build Molecule objects
     opt_method: str = config.get("opt_method", "LBFGS")
-    form_hessian = (opt_method.lower() == "eigenvector_follow")
+    opt_method = opt_method.lower()
+    form_hessian = (opt_method == "eigenvector_follow")
     mol_react = Molecule.from_options(
-        geom=input_atoms_list,
+        geom=input_geom,
         PES=pes,
         coord_obj=deloc_react,
         Form_Hessian=form_hessian,
     )
     num_nodes = config.get("num_nodes", 11)
-    mol_prod = Molecule.from_options(
+    mol_prod = Molecule.copy_from_options(
         mol_react,
         xyz=final_atoms.positions,
         new_node_id=num_nodes - 1,
+        copy_wavefunction=False,
     )
     # optimizer
-    only_climb: bool = config.get("only_climb", False)
-    conv_gmax: float = config.get("conv_gmax", 0.05)
-    conv_energy: float = config.get("conv_energy", 1e-6)
-    max_gsm_steps: int = config.get("max_gsm_steps", 500)
-    max_opt_steps: int = config.get("max_opt_steps", 100)
+    only_climb: bool = config.get("climb", False)
+    ediff: float = float(config.get("ediff", 100.))
+    emax: float = float(config.get("emax", 1e-6))
+    add_node_tol: float = float(config.get("add_node_tol", 0.3))
+    max_gsm_steps: int = int(config.get("max_gsm_steps", 500))
+    max_opt_steps: int = int(config.get("max_opt_steps", 100))
+    print_level: int = int(config.get("print_level", 0))
+    step_size: float = float(config.get("step_size", 0.1))
     opt_options = {
-        "print_level": config.get("print_level", 1),
-        "Linesearch": config.get("linesearch", "backtrack"),
-        "update_hess_in_bg": not only_climb or opt_method.lower() == "lbfgs",
-        "conv_Ediff": conv_energy,
+        "print_level": print_level,
+        "Linesearch": config.get("linesearch", "NoLineSearch"),
+        "update_hess_in_bg": not only_climb or opt_method == "lbfgs",
+        "conv_Ediff": ediff,
         "conv_gmax": conv_gmax,
-        "DMAX": config.get("step_size", 0.1),
+        "DMAX": step_size,
         "opt_climb": only_climb,
     }
     if opt_method.lower() == "eigenvector_follow":
@@ -154,16 +205,16 @@ def main():
         reactant=mol_react,
         product=mol_prod,
         nnodes=num_nodes,
-        CONV_TOL=config.get("gsm_conv_tol", 0.1),
+        CONV_TOL=emax,
         CONV_gmax=conv_gmax,
-        CONV_Ediff=conv_energy,
-        ADD_NODE_TOL=config.get("add_node_tol", 0.3),
+        CONV_Ediff=ediff,
+        ADD_NODE_TOL=add_node_tol,
         growth_direction=0,
         optimizer=opt,
-        ID=0,
-        print_level=config.get("print_level", 1),
+        ID=ID,
+        print_level=print_level,
         mp_cores=1,
-        inter_method="DLC",
+        interp_method="DLC",
     )
     rtype=1 if only_climb else 0
     gsm.go_gsm(

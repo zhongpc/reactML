@@ -1,3 +1,4 @@
+import os
 import argparse
 
 import numpy as np
@@ -52,30 +53,52 @@ def main():
     # replace inputfile
     input_atoms_list = [(ele, coord) for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
     config["inputfile"] = input_atoms_list  # fake inputfile but input list
-    if "xc" in config and config["xc"].endswith("3c"):
-        xc_3c = config["xc"]
-        mf = build_3c_method(config)
+    if "mlip" in config:
+        assert "xc" not in config, "Please do not specify 'xc' when using MLIP."
+        charge = config.get("charge", 0)
+        spin = config.get("spin", 0)
+        for image in images:
+            image.info["charge"] = charge
+            image.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
+        if config["mlip"] == "uma":
+            from fairchem.core import FAIRChemCalculator, pretrained_mlip
+            from omegaconf import OmegaConf
+            device: str = config.get("device", None)
+            model: str = config["model"]
+            task_name: str = config.get("task_name", "omol")
+            atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
+            predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
+            calc = FAIRChemCalculator(predictor, task_name=task_name)
+        else:
+            raise NotImplementedError(f"Unknown MLIP: {config['mlip']}")
+    elif "xc" in config:
+        assert "mlip" not in config, "Please do not specify 'mlip' when using DFT."
+        if config["xc"].endswith("3c"):
+            xc_3c = config["xc"]
+            mf = build_3c_method(config)
+        else:
+            xc_3c = None
+            mf = build_method(config)
+        use_soscf: bool = config.get("soscf", False)
+        max_unconverged_steps: int = config.get("max_unconverged_steps", None)
+        calc = PySCFCalculator(
+            method=mf, xc_3c=xc_3c, soscf=use_soscf,
+            max_unconverged_steps=max_unconverged_steps
+        )
     else:
-        xc_3c = None
-        mf = build_method(config)
+        raise ValueError("Please specify either 'mlip' or 'xc' in the config file.")
 
-    # optimize the terminal images first
     fmax = float(config.get("fmax", 0.05))  # in eV/Angstrom
-    use_ci_neb = config.get("ci_neb", False)
+    use_climb = config.get("climb", False)
     max_steps = int(config.get("max_steps", 1000))
-    use_soscf: bool = config.get("soscf", False)
-    spring_constant: float = config.get("spring_constant", 0.1)
+    spring_constant: float = float(config.get("spring_constant", 0.1))
     method: str = config.get("neb_method", "improvedtangent")
-    max_unconverged_steps: int = config.get("max_unconverged_steps", None)
     opt_terminal: bool = config.get("optimize_terminal", True)
     interpolate_method: str = config.get("interpolate_method", "idpp")
+    # optimize the terminal images first
     if read_images is None and opt_terminal:
-        images[0].calc = PySCFCalculator(
-            mf, xc_3c=xc_3c, soscf=use_soscf, max_unconverged_steps=max_unconverged_steps
-        )
-        images[-1].calc = PySCFCalculator(
-            mf, xc_3c=xc_3c, soscf=use_soscf, max_unconverged_steps=max_unconverged_steps
-        )
+        images[0].calc = calc
+        images[-1].calc = calc
         print("Optimizing the initial image.")
         with FIRE(images[0]) as opt0:
             opt0.run(fmax=fmax)
@@ -86,7 +109,7 @@ def main():
 
     # set up the NEB
     ci_after_n_steps: int = config.get("ci_after_n_steps", None)
-    assert (ci_after_n_steps is None) ^ use_ci_neb, \
+    assert (ci_after_n_steps is None) ^ use_climb, \
         "If turning on CI-NEB, please specify 'ci_after_n_steps' in the config file.\n\
             If setting 'ci_after_n_steps', please also turn on CI-NEB."
     if ci_after_n_steps is not None:
@@ -98,6 +121,7 @@ def main():
         climb=False,
         remove_rotation_and_translation=True,
         method=method,
+        allow_shared_calculator=True,
     )
     if read_images is None:
         neb.interpolate(interpolate_method)
@@ -106,16 +130,11 @@ def main():
     for i, image in enumerate(images):
         if image.calc is not None:
             continue  # already has a calculator (e.g., terminal images)
-        image.calc = PySCFCalculator(
-            mf, xc_3c=xc_3c, soscf=use_soscf, max_unconverged_steps=max_unconverged_steps
-        )
+        image.calc = calc
 
     # set up the optimizer
     trajectory = config.get("trajectory", f"{filename}_neb.traj")
-    opt = FIRE(
-        neb,
-        trajectory=trajectory,
-    )
+    opt = FIRE(neb, trajectory=trajectory)
     max_steps = config.get("neb_max_steps", 1000)
     steps = max_steps if ci_after_n_steps is None else ci_after_n_steps
     opt.run(fmax=fmax, steps=steps)
@@ -126,6 +145,7 @@ def main():
             climb=True,
             remove_rotation_and_translation=True,
             method=method,
+            allow_shared_calculator=True,
         )
         opt = FIRE(
             ci_neb,
@@ -143,7 +163,7 @@ def main():
     # judge if there is a potential transition state
     energies = np.array([image.get_potential_energy() for image in images])
     for i, energy in enumerate(energies):
-        print(f"Image {i}: Energy = {energy:.6f} eV")
+        print(f"Image {i:02d}: Energy = {energy:.6f} eV")
     # the highest energy point is the potential transition state
     max_energy_index = np.argmax(energies)
     if 0 < max_energy_index < len(images) - 1:

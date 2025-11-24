@@ -64,7 +64,7 @@ def compute_mlff_hessian(positions: torch.Tensor, forces: torch.Tensor) -> torch
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=str, default="pyscf_config.yaml",
+        "--config", type=str, default="config.yaml",
         help="Path to the configuration file",
     )
     args = parser.parse_args()
