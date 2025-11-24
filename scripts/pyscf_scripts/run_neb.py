@@ -35,7 +35,6 @@ def main():
         filename = read_images.rsplit(".", 1)[0]
     else:  # interpolate images
         # read the initial and final geometries
-            # setup files
         inputfile: str = config.get("inputfile", "mol.xyz")
         filename = inputfile.rsplit(".", 1)[0]
         atoms_list = ase.io.read(inputfile, index=":")
