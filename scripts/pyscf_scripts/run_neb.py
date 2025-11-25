@@ -157,6 +157,11 @@ def main():
     else:
         images = neb.images
 
+    # check convergence
+    if opt.converged():
+        print("NEB optimization converged successfully.")
+    else:
+        print("NEB failed to converge within the maximum number of steps.")
     # save the final images
     images_filename = f"{filename}_neb.xyz"
     ase.io.write(images_filename, images, format="extxyz")
