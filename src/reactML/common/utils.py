@@ -80,6 +80,8 @@ def build_method(config: dict):
     scf_conv_tol = config.get("scf_conv_tol", 1e-8)
     direct_scf_tol = config.get("direct_scf_tol", 1e-8)
     scf_max_cycle = config.get("scf_max_cycle", 50)
+    level_shift = config.get("level_shift", 0.0)
+    diis_space = config.get("diis_space", 8)
     with_df = config.get("with_df", True)
     auxbasis = config.get("auxbasis", "def2-universal-jkfit")
     with_gpu = config.get("with_gpu", True)
@@ -169,6 +171,8 @@ def build_method(config: dict):
     mf.chkfile = None
     mf.conv_tol = float(scf_conv_tol)
     mf.max_cycle = scf_max_cycle
+    mf.level_shift = float(level_shift)
+    mf.diis_space = int(diis_space)
 
     return mf
 

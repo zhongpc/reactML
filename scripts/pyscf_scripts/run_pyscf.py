@@ -65,10 +65,10 @@ def main():
         config["charge"] = atoms.info["charge"]
     else:
         raise ValueError("Charge must be specified in the configuration file or in the input XYZ file.")
-    if "multiplicity" in config:
-        atoms.info["multiplicity"] = config["multiplicity"]
+    if "spin" in config:
+        atoms.info["multiplicity"] = config["spin"] + 1
     elif "multiplicity" in atoms.info:
-        config["multiplicity"] = atoms.info["multiplicity"]
+        config["spin"] = atoms.info["multiplicity"] - 1
     else:
         raise ValueError("Multiplicity must be specified in the configuration file or in the input XYZ file.")
     if "xc" in config and config["xc"].endswith("3c"):
@@ -183,12 +183,10 @@ def main():
     start_time = time.time()
     e_tot = mf.kernel()
     if not mf.converged and use_soscf:
-        mo_init = mf.mo_coeff
-        mocc_init = mf.mo_occ
         mf = mf.newton()
-        e_tot = mf.kernel(mo_coeff=mo_init, mo_occ=mocc_init)
+        e_tot = mf.kernel()
         if mf.converged:
-            print("SOSCF converged.")
+            print("SOSCF converged")
         mf = mf.undo_soscf()
     e1 = mf.scf_summary.get("e1", 0.0)
     e_coul = mf.scf_summary.get("coul", 0.0)

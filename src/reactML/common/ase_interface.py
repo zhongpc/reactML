@@ -57,16 +57,14 @@ class PySCFCalculator(Calculator):
         energy, gradients = self.g_scanner(mol)
         if not self.g_scanner.converged and self.soscf:
             # try SOSCF if not converged
-            mo_init = self.g_scanner.base.mo_coeff
-            mocc_init = self.g_scanner.base.mo_occ
             newton_method = self.method.newton()
             newton_method.reset(mol)
-            newton_method.kernel(mo_init, mocc_init)
+            newton_method.kernel()
             self.g_scanner.base.mo_coeff = newton_method.mo_coeff
             self.g_scanner.base.mo_occ = newton_method.mo_occ
             energy, gradients = self.g_scanner(mol)
             if self.g_scanner.converged:
-                print("SOSCF converged.")
+                print("SOSCF converged")
         if not self.g_scanner.converged:
             self.num_unconverged += 1
             if self.num_unconverged > self.max_unconverged_steps:
