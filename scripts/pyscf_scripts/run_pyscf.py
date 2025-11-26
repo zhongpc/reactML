@@ -59,14 +59,18 @@ def main():
 
     # build method
     atoms = ase.io.read(config["inputfile"])
-    if "charge" in atoms.info:
+    if "charge" in config:
+        atoms.info["charge"] = config["charge"]
+    elif "charge" in atoms.info:
         config["charge"] = atoms.info["charge"]
     else:
-        atoms.info["charge"] = config["charge"]
-    if "multiplicity" in atoms.info:
-        config["spin"] = atoms.info["multiplicity"] - 1
+        raise ValueError("Charge must be specified in the configuration file or in the input XYZ file.")
+    if "multiplicity" in config:
+        atoms.info["multiplicity"] = config["multiplicity"]
+    elif "multiplicity" in atoms.info:
+        config["multiplicity"] = atoms.info["multiplicity"]
     else:
-        atoms.info["multiplicity"] = config["spin"] + 1
+        raise ValueError("Multiplicity must be specified in the configuration file or in the input XYZ file.")
     if "xc" in config and config["xc"].endswith("3c"):
         xc_3c = config["xc"]
         mf = build_3c_method(config)
@@ -183,9 +187,9 @@ def main():
         mocc_init = mf.mo_occ
         mf = mf.newton()
         e_tot = mf.kernel(mo_coeff=mo_init, mo_occ=mocc_init)
+        if mf.converged:
+            print("SOSCF converged.")
         mf = mf.undo_soscf()
-    if not mf.converged:
-        Warning("SCF calculation did not converge.")
     e1 = mf.scf_summary.get("e1", 0.0)
     e_coul = mf.scf_summary.get("coul", 0.0)
     e_xc = mf.scf_summary.get("exc", 0.0)
