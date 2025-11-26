@@ -58,6 +58,15 @@ def main():
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
 
     # build method
+    atoms = ase.io.read(config["inputfile"])
+    if "charge" in atoms.info:
+        config["charge"] = atoms.info["charge"]
+    else:
+        atoms.info["charge"] = config["charge"]
+    if "multiplicity" in atoms.info:
+        config["spin"] = atoms.info["multiplicity"] - 1
+    else:
+        atoms.info["multiplicity"] = config["spin"] + 1
     if "xc" in config and config["xc"].endswith("3c"):
         xc_3c = config["xc"]
         mf = build_3c_method(config)
@@ -68,7 +77,6 @@ def main():
     # set calculator
     use_soscf = config.get("soscf", False)
     calc = PySCFCalculator(mf, xc_3c=xc_3c, soscf=use_soscf)
-    atoms = ase.io.read(config["inputfile"])
     atoms.calc = calc
 
     # task 1: optimization
@@ -162,7 +170,7 @@ def main():
             print(f"Final RMS displacement: {drms:.6e} Angstrom")
         # save final structure
         opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.xyz")
-        ase.io.write(opt_outputfile, atoms)
+        ase.io.write(opt_outputfile, atoms, columns=["symbols", "positions"])
         # record end time
         end_time = time.time()
         print(f"Optimization completed in {end_time - start_time:.2f} seconds.")
@@ -175,6 +183,7 @@ def main():
         mocc_init = mf.mo_occ
         mf = mf.newton()
         e_tot = mf.kernel(mo_coeff=mo_init, mo_occ=mocc_init)
+        mf = mf.undo_soscf()
     if not mf.converged:
         Warning("SCF calculation did not converge.")
     e1 = mf.scf_summary.get("e1", 0.0)
@@ -328,7 +337,7 @@ def main():
         if num_imag > 0:
             print(f"Note: {num_imag} imaginary frequencies detected!")
         temp = freq_config.get("temp", 298.15)
-        press = freq_config.get("press", 1.0)
+        press = freq_config.get("press", 101325)
         thermo_info = thermo.thermo(mf, freq_au, temp, press)
         end_time = time.time()
         print(f"Vibrational frequency analysis completed in {end_time - start_time:.2f} seconds.")
@@ -342,7 +351,16 @@ def main():
                 h5f.create_dataset("freq_wavenumber", data=freq_info["freq_wavenumber"])
                 h5f.create_dataset("freq_wavenumber_unit", data="cm^-1")
                 h5f.create_dataset("norm_mode", data=freq_info["norm_mode"])
-    
+        # save thermo data
+        save_thermo: bool = config.get("save_thermo", False)
+        if save_thermo:
+            pyscf_names = ["temperature", "pressure", "E0", "ZPE", "E_tot", "H_tot", "S_tot", "G_tot"]
+            reactml_names = ["T", "P", "E0", "ZPE", "U", "H", "S", "G"]
+            with h5py.File(datafile, 'a') as h5f:
+                for pyscf_name, reactml_name in zip(pyscf_names, reactml_names):
+                    h5f.create_dataset(reactml_name, data=thermo_info[pyscf_name][0])
+                    h5f.create_dataset(f"{reactml_name}_unit", data=thermo_info[pyscf_name][1])
+
     # task 5: IRC
     run_irc = config.get("irc", False)
     if run_irc:

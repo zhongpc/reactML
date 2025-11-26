@@ -339,7 +339,7 @@ def main():
             print(f"Note: {num_imag} imaginary frequencies detected!")
         dummy_mf = SimpleNamespace(mol=mol, e_tot=energy / units.Hartree)
         temp = config.get("temp", 298.15)
-        press = config.get("press", 1.0)
+        press = config.get("press", 101325)
         thermo_info = thermo.thermo(dummy_mf, freq_au, temp, press)
         end_time = time.time()
         print(f"Vibrational frequency analysis completed in {end_time - start_time:.2f} seconds.")
