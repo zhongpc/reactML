@@ -74,8 +74,8 @@ def build_method(config: dict):
     ecp = config.get("ecp", None)
     nlc = config.get("nlc", "")
     disp = config.get("disp", None)
-    grids = config.get("grids", {"atom_grid": (99, 590)})
-    nlcgrids = config.get("nlcgrids", {"atom_grid": (50, 194)})
+    grids = config.get("grids", None)
+    nlcgrids = config.get("nlcgrids", None)
     verbose = config.get("verbose", 4)
     scf_conv_tol = config.get("scf_conv_tol", 1e-8)
     direct_scf_tol = config.get("direct_scf_tol", 1e-8)
@@ -116,15 +116,18 @@ def build_method(config: dict):
     mf.nlc = nlc
     mf.disp = disp
     # set grids
-    if "atom_grid" in grids:
-        mf.grids.atom_grid = grids["atom_grid"]
-    if "level" in grids:
-        mf.grids.level = grids["level"]
+    if grids is not None:
+        if "atom_grid" in grids:
+            mf.grids.atom_grid = grids["atom_grid"]
+        elif "level" in grids:
+            mf.grids.level = grids["level"]
+    # set nlc grids
     if mf._numint.libxc.is_nlc(mf.xc) or nlc is not None:
-        if "atom_grid" in nlcgrids:
-            mf.nlcgrids.atom_grid = nlcgrids["atom_grid"]
-        if "level" in nlcgrids:
-            mf.nlcgrids.level = nlcgrids["level"]
+        if nlcgrids is not None:
+            if "atom_grid" in nlcgrids:
+                mf.nlcgrids.atom_grid = nlcgrids["atom_grid"]
+            if "level" in nlcgrids:
+                mf.nlcgrids.level = nlcgrids["level"]
     # set density fitting
     if with_df:
         mf = mf.density_fit(auxbasis=auxbasis)
@@ -247,4 +250,5 @@ def get_Hessian_method(mf, xc_3c=None):
     
     h = mf.Hessian()
     h.auxbasis_response = 2
+    h.grid_response = True
     return h
