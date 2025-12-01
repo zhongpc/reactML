@@ -1,3 +1,4 @@
+import os
 import argparse
 
 import numpy as np
@@ -22,79 +23,157 @@ def main():
 
     with open(args.config, 'r') as f:
         config: dict = yaml.safe_load(f)
-    
-    # setup files
-    inputfile: str = config.get("inputfile", "mol.xyz")
-    filename = inputfile.rsplit(".", 1)[0]
 
     # set symmetry tolerance (hardcoded in Angstrom)
     if "symm_geom_tol" in config:
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
 
-    # read the initial and final geometries
-    atoms_list = ase.io.read(inputfile, index=":")
-    assert len(atoms_list) == 2, "Input file must contain exactly two structures: initial and final geometries."
-    init_atoms, final_atoms = atoms_list[0], atoms_list[-1]
-    assert np.all(init_atoms.symbols == final_atoms.symbols), \
-        "Initial and final geometries must have the same atoms."
+    # create images
+    read_images: str = config.get("read_images", None)
+    if read_images is not None:  # read images
+        images = ase.io.read(read_images, index=":")
+        init_atoms = images[0]
+        filename = read_images.rsplit(".", 1)[0]
+    else:  # interpolate images
+        # read the initial and final geometries
+        inputfile: str = config.get("inputfile", "mol.xyz")
+        filename = inputfile.rsplit(".", 1)[0]
+        atoms_list = ase.io.read(inputfile, index=":")
+        assert len(atoms_list) == 2, "Input file must contain exactly two structures: initial and final geometries."
+        init_atoms, final_atoms = atoms_list[0], atoms_list[-1]
+        assert np.all(init_atoms.symbols == final_atoms.symbols), \
+            "Initial and final geometries must have the same atoms."
+        images = [init_atoms]
+        num_images = config.get("num_images", 5)
+        for _ in range(num_images):
+            images.append(init_atoms.copy())
+        images.append(final_atoms)
 
     # build method
     # replace inputfile
     input_atoms_list = [(ele, coord) for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
     config["inputfile"] = input_atoms_list  # fake inputfile but input list
-    if "xc" in config and config["xc"].endswith("3c"):
-        xc_3c = config["xc"]
-        mf = build_3c_method(config)
+    if "mlip" in config:
+        assert "xc" not in config, "Please do not specify 'xc' when using MLIP."
+        charge = config.get("charge", 0)
+        spin = config.get("spin", 0)
+        for image in images:
+            image.info["charge"] = charge
+            image.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
+        if config["mlip"] == "uma":
+            from fairchem.core import FAIRChemCalculator, pretrained_mlip
+            from omegaconf import OmegaConf
+            device: str = config.get("device", None)
+            model: str = config["model"]
+            task_name: str = config.get("task_name", "omol")
+            atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
+            predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
+            calc = FAIRChemCalculator(predictor, task_name=task_name)
+        else:
+            raise NotImplementedError(f"Unknown MLIP: {config['mlip']}")
+    elif "xc" in config:
+        assert "mlip" not in config, "Please do not specify 'mlip' when using DFT."
+        if config["xc"].endswith("3c"):
+            xc_3c = config["xc"]
+            mf = build_3c_method(config)
+        else:
+            xc_3c = None
+            mf = build_method(config)
+        use_soscf: bool = config.get("soscf", False)
+        max_unconverged_steps: int = config.get("max_unconverged_steps", None)
+        calc = PySCFCalculator(
+            method=mf, xc_3c=xc_3c, soscf=use_soscf,
+            max_unconverged_steps=max_unconverged_steps
+        )
     else:
-        xc_3c = None
-        mf = build_method(config)
+        raise ValueError("Please specify either 'mlip' or 'xc' in the config file.")
 
-    # create images
-    images = [init_atoms]
-    num_images = config.get("num_images", 5)
-    for _ in range(num_images):
-        images.append(init_atoms.copy())
-    images.append(final_atoms)
+    fmax = float(config.get("fmax", 0.05))  # in eV/Angstrom
+    use_climb = config.get("climb", False)
+    max_steps = int(config.get("max_steps", 1000))
+    spring_constant: float = float(config.get("spring_constant", 0.1))
+    method: str = config.get("neb_method", "improvedtangent")
+    opt_terminal: bool = config.get("optimize_terminal", True)
+    interpolate_method: str = config.get("interpolate_method", "idpp")
+    # optimize the terminal images first
+    if read_images is None and opt_terminal:
+        images[0].calc = calc
+        images[-1].calc = calc
+        print("Optimizing the initial image.")
+        with FIRE(images[0]) as opt0:
+            opt0.run(fmax=fmax)
+        print("Optimizing the final image.")
+        with FIRE(images[-1]) as opt1:
+            opt1.run(fmax=fmax)
+        del opt0, opt1
 
     # set up the NEB
+    ci_after_n_steps: int = config.get("ci_after_n_steps", None)
+    assert (ci_after_n_steps is None) ^ use_climb, \
+        "If turning on CI-NEB, please specify 'ci_after_n_steps' in the config file.\n\
+            If setting 'ci_after_n_steps', please also turn on CI-NEB."
+    if ci_after_n_steps is not None:
+        print(f"Climbing-image NEB will start after {ci_after_n_steps} steps.")
+
     neb = NEB(
         images=images,
-        climb=config.get("ci_neb", False),
-        method=config.get("neb_method", "aseneb"),
+        k=spring_constant,
+        climb=False,
+        remove_rotation_and_translation=True,
+        method=method,
+        allow_shared_calculator=True,
     )
-    neb.interpolate(config.get("interpolate_method", "linear"))
+    if read_images is None:
+        neb.interpolate(interpolate_method)
 
     # set up calculators
-    for i, image in enumerate(neb.images):
-        if i == 0:
-            image.calc = PySCFCalculator(mf, xc_3c=xc_3c)
-        else:
-            image.calc = PySCFCalculator(mf, xc_3c=xc_3c)
+    for i, image in enumerate(images):
+        if image.calc is not None:
+            continue  # already has a calculator (e.g., terminal images)
+        image.calc = calc
 
     # set up the optimizer
     trajectory = config.get("trajectory", f"{filename}_neb.traj")
-    opt = FIRE(
-        neb,
-        trajectory=trajectory,
-    )
-    fmax = config.get("fmax", 0.05)  # in eV/Angstrom
-    steps = config.get("neb_max_steps", 1000)
+    opt = FIRE(neb, trajectory=trajectory)
+    max_steps = config.get("neb_max_steps", 1000)
+    steps = max_steps if ci_after_n_steps is None else ci_after_n_steps
     opt.run(fmax=fmax, steps=steps)
+    if ci_after_n_steps is not None:
+        ci_neb = NEB(
+            images=images,
+            k=spring_constant,
+            climb=True,
+            remove_rotation_and_translation=True,
+            method=method,
+            allow_shared_calculator=True,
+        )
+        opt = FIRE(
+            ci_neb,
+            trajectory=trajectory,
+            append_trajectory=True,
+        )
+        opt.run(fmax=fmax, steps=max_steps-ci_after_n_steps)
+        images = ci_neb.images
+    else:
+        images = neb.images
 
+    # check convergence
+    if opt.converged():
+        print("NEB optimization converged successfully.")
+    else:
+        print("NEB failed to converge within the maximum number of steps.")
     # save the final images
     images_filename = f"{filename}_neb.xyz"
-    ase.io.write(images_filename, neb.images, format="extxyz")
-
+    ase.io.write(images_filename, images, format="extxyz")
     # judge if there is a potential transition state
-    energies = np.array([image.get_potential_energy() for image in neb.images])
-    # the energy is high than both neighbors
-    atoms_list = []
-    for i in range(1, len(energies) - 1):
-        if energies[i] > energies[i - 1] and energies[i] > energies[i + 1]:
-            print(f"Potential transition state found at image {i} with energy {energies[i]:.6f} eV.")
-            atoms_list.append(neb.images[i])
-    if atoms_list:
-        ase.io.write(f"{filename}_ts.xyz", atoms_list)
+    energies = np.array([image.get_potential_energy() for image in images])
+    for i, energy in enumerate(energies):
+        print(f"Image {i:02d}: Energy = {energy:.6f} eV")
+    # the highest energy point is the potential transition state
+    max_energy_index = np.argmax(energies)
+    if 0 < max_energy_index < len(images) - 1:
+        print(f"A potential transition state is found at image {max_energy_index}.")
+        ase.io.write(f"{filename}_ts.xyz", images[max_energy_index])
     else:
         print("There might be no transition state along the NEB path.")
 

@@ -46,6 +46,7 @@ def main():
     inputfile: str = config.get("inputfile", "mol.xyz")
     filename = inputfile.rsplit('.', 1)[0]
     datafile: str = config.get("datafile", f"{filename}_data.h5")
+    with_gpu = config.get("with_gpu", False)
     # empty datafile if save anything
     for key in config:
         if isinstance(key, str) and key.startswith("save_") and config[key]:
@@ -57,20 +58,29 @@ def main():
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
 
     # build method
-    if "xc" in config and config["xc"].endswith("3c"):
+    atoms = ase.io.read(config["inputfile"])
+    if "charge" in config:
+        atoms.info["charge"] = config["charge"]
+    elif "charge" in atoms.info:
+        config["charge"] = atoms.info["charge"]
+    else:
+        raise ValueError("Charge must be specified in the configuration file or in the input XYZ file.")
+    if "spin" in config:
+        atoms.info["multiplicity"] = config["spin"] + 1
+    elif "multiplicity" in atoms.info:
+        config["spin"] = atoms.info["multiplicity"] - 1
+    else:
+        raise ValueError("Multiplicity must be specified in the configuration file or in the input XYZ file.")
+    if "xc" in config and config["xc"].lower().endswith("3c"):
         xc_3c = config["xc"]
         mf = build_3c_method(config)
     else:
         xc_3c = None
         mf = build_method(config)
-    
-    use_newton = config.get("newton", False)
-    if use_newton:
-        mf = mf.newton()
-    
+
     # set calculator
-    calc = PySCFCalculator(mf, xc_3c=xc_3c)
-    atoms = ase.io.read(config["inputfile"])
+    use_soscf = config.get("soscf", False)
+    calc = PySCFCalculator(mf, xc_3c=xc_3c, soscf=use_soscf)
     atoms.calc = calc
 
     # task 1: optimization
@@ -129,6 +139,8 @@ def main():
             diag_every_n=opt_config.get("diag_every_n", None),
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
         )
+        max_unconverged_steps = opt_config.get("max_unconverged_steps", None)
+        atoms.calc.set_max_unconverged_steps(max_unconverged_steps)
         energy_criteria = float(opt_config.get("energy", 1e-6)) * units.Hartree
         fmax_criteria = float(opt_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         frms_criteria = float(opt_config.get("frms", 3.0e-4)) * units.Hartree / units.Bohr
@@ -162,7 +174,7 @@ def main():
             print(f"Final RMS displacement: {drms:.6e} Angstrom")
         # save final structure
         opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.xyz")
-        ase.io.write(opt_outputfile, atoms)
+        ase.io.write(opt_outputfile, atoms, columns=["symbols", "positions"])
         # record end time
         end_time = time.time()
         print(f"Optimization completed in {end_time - start_time:.2f} seconds.")
@@ -170,8 +182,12 @@ def main():
     # task 2: single point energy
     start_time = time.time()
     e_tot = mf.kernel()
-    if not mf.converged:
-        Warning("SCF calculation did not converge.")
+    if not mf.converged and use_soscf:
+        mf = mf.newton()
+        e_tot = mf.kernel()
+        if mf.converged:
+            print("SOSCF converged")
+        mf = mf.undo_soscf()
     e1 = mf.scf_summary.get("e1", 0.0)
     e_coul = mf.scf_summary.get("coul", 0.0)
     e_xc = mf.scf_summary.get("exc", 0.0)
@@ -289,9 +305,9 @@ def main():
         start_time = time.time()
         numerical = freq_config.get("numerical", False)
         if numerical:
-            try:
+            if with_gpu:
                 from reactML.common import finite_diff_gpu as finite_diff
-            except ImportError:
+            else:
                 from pyscf.tools import finite_diff
             displacement = float(freq_config.get("displacement", 1e-3))
             h = finite_diff.Hessian(get_gradient_method(mf, xc_3c=xc_3c))
@@ -323,7 +339,7 @@ def main():
         if num_imag > 0:
             print(f"Note: {num_imag} imaginary frequencies detected!")
         temp = freq_config.get("temp", 298.15)
-        press = freq_config.get("press", 1.0)
+        press = freq_config.get("press", 101325)
         thermo_info = thermo.thermo(mf, freq_au, temp, press)
         end_time = time.time()
         print(f"Vibrational frequency analysis completed in {end_time - start_time:.2f} seconds.")
@@ -337,7 +353,16 @@ def main():
                 h5f.create_dataset("freq_wavenumber", data=freq_info["freq_wavenumber"])
                 h5f.create_dataset("freq_wavenumber_unit", data="cm^-1")
                 h5f.create_dataset("norm_mode", data=freq_info["norm_mode"])
-    
+        # save thermo data
+        save_thermo: bool = config.get("save_thermo", False)
+        if save_thermo:
+            pyscf_names = ["temperature", "pressure", "E0", "ZPE", "E_tot", "H_tot", "S_tot", "G_tot"]
+            reactml_names = ["T", "P", "E0", "ZPE", "U", "H", "S", "G"]
+            with h5py.File(datafile, 'a') as h5f:
+                for pyscf_name, reactml_name in zip(pyscf_names, reactml_names):
+                    h5f.create_dataset(reactml_name, data=thermo_info[pyscf_name][0])
+                    h5f.create_dataset(f"{reactml_name}_unit", data=thermo_info[pyscf_name][1])
+
     # task 5: IRC
     run_irc = config.get("irc", False)
     if run_irc:
@@ -354,6 +379,8 @@ def main():
             diag_every_n=irc_config.get("diag_every_n", None),
             hessian_function=lambda x: hessian_function(x, mf, xc_3c=xc_3c),
         )
+        max_unconverged_steps = irc_config.get("max_unconverged_steps", None)
+        atoms.calc.set_max_unconverged_steps(max_unconverged_steps)
         fmax: float = float(irc_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         irc_steps: int = irc_config.get("irc_steps", 10)
         direction: str = irc_config.get("direction", "both")

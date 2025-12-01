@@ -64,7 +64,7 @@ def compute_mlff_hessian(positions: torch.Tensor, forces: torch.Tensor) -> torch
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=str, default="pyscf_config.yaml",
+        "--config", type=str, default="config.yaml",
         help="Path to the configuration file",
     )
     args = parser.parse_args()
@@ -99,6 +99,7 @@ def main():
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"No device specified. Using device: {device}")
     precision: str = config.get("precision", "float64")
+    task_name: str = config.get("task_name", "omol")
     if mlip.lower() == "mace":
         from mace.calculators import mace_omol
         mace_calc = mace_omol(
@@ -146,12 +147,12 @@ def main():
         atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
         predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
         # predictor = pretrained_mlip.get_predict_unit(model, device=device, cache_dir="/home/users/nus/zhongpc/scratch/models/uma")
-        uma_calc = FAIRChemCalculator(predictor, task_name="omol")
+        uma_calc = FAIRChemCalculator(predictor, task_name=task_name)
         atoms.calc = uma_calc
         batch_size = config.get("batch_size", 128)
-
+        finite_diff_eps = config.get("finite_diff_eps", 5e-3)
         def uma_hess_function(atoms: ase.Atoms):
-            eps = 5e-3
+            eps = finite_diff_eps
             data_list = []
             for i in range(len(atoms)):
                 for j in range(3):
@@ -277,7 +278,7 @@ def main():
             print(f"Final RMS displacement: {drms:.6e} Angstrom")
         # save final structure
         opt_outputfile = opt_config.get("outputfile", f"{filename}_opt.xyz")
-        ase.io.write(opt_outputfile, atoms, format="xyz")
+        ase.io.write(opt_outputfile, atoms, columns=["symbols", "positions"])
         # record end time
         end_time = time.time()
         print(f"Optimization completed in {end_time - start_time:.2f} seconds.")
@@ -339,7 +340,7 @@ def main():
             print(f"Note: {num_imag} imaginary frequencies detected!")
         dummy_mf = SimpleNamespace(mol=mol, e_tot=energy / units.Hartree)
         temp = config.get("temp", 298.15)
-        press = config.get("press", 1.0)
+        press = config.get("press", 101325)
         thermo_info = thermo.thermo(dummy_mf, freq_au, temp, press)
         end_time = time.time()
         print(f"Vibrational frequency analysis completed in {end_time - start_time:.2f} seconds.")
