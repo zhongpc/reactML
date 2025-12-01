@@ -1,5 +1,6 @@
 from typing import List, Iterable, Dict, Literal
 from collections import Counter
+from datetime import datetime
 
 import numpy as np
 
@@ -27,6 +28,7 @@ class MoleculeRecord:
         charge: int = 0,
         multiplicity: int = 1,
         note: str = None,
+        date: str = None,
     ) -> None:
         """
         Args:
@@ -44,6 +46,7 @@ class MoleculeRecord:
         self.multiplicity = multiplicity
         self.method_results: dict = None
         self.note = note
+        self.date = date if date is not None else datetime.today().strftime("%Y-%m-%d")
     
     def __repr__(self) -> str:
         return f"MoleculeRecord(smiles={self.smiles}, inchikey={self.inchikey})"
@@ -83,6 +86,7 @@ class MoleculeRecord:
             "multiplicity": self.multiplicity,
             "method_results": self.method_results,
             "note": self.note,
+            "date": self.date,
         }
     
     @classmethod
@@ -103,6 +107,7 @@ class MoleculeRecord:
             charge=d.get("charge", 0),
             multiplicity=d.get("multiplicity", 1),
             note=d.get("note", None),
+            date=d.get("date", None),
         )
         obj.method_results = d.get("method_results", None)
         return obj
@@ -168,6 +173,7 @@ class ReactionRecord:
         charge: int = 0,
         multiplicity: int = 1,  # assume adiabatic PES
         note: str = None,
+        date: str = None,
     ) -> None:
         """
         Args:
@@ -192,6 +198,7 @@ class ReactionRecord:
         self.reactant_inchikeys = dict(Counter(reactant_inchikeys))
         self.product_inchikeys = dict(Counter(product_inchikeys))
         self.note = note
+        self.date = date if date is not None else datetime.today().strftime("%Y-%m-%d")
 
     def add_results(
         self,
@@ -248,6 +255,7 @@ class ReactionRecord:
             "product_results": self.product_results,
             "reaction_results": self.reaction_results,
             "note": self.note,
+            "date": self.date,
         }
 
     @classmethod
@@ -269,6 +277,7 @@ class ReactionRecord:
             charge=d.get("charge", 0),
             multiplicity=d.get("multiplicity", 1),
             note=d.get("note", None),
+            date=d.get("date", None),
         )
         obj.reactant_results = d.get("reactant_results", None)
         obj.product_results = d.get("product_results", None)

@@ -71,7 +71,7 @@ def main():
         config["spin"] = atoms.info["multiplicity"] - 1
     else:
         raise ValueError("Multiplicity must be specified in the configuration file or in the input XYZ file.")
-    if "xc" in config and config["xc"].endswith("3c"):
+    if "xc" in config and config["xc"].lower().endswith("3c"):
         xc_3c = config["xc"]
         mf = build_3c_method(config)
     else:

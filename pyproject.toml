@@ -10,9 +10,6 @@ requires-python = ">=3.9"
 urls = { "Homepage" = "https://github.com/zhongpc/reactml" }
 dependencies = [
     "ase>=3.26.0",
-    "cupy-cuda12x==13.4.1",
-    "cutensor-cu12==2.2.0",
-    "gpu4pyscf-cuda12x>=1.4.3",
     "pymatgen>=2024.8.9",
     "pyyaml>=6.0.3",
 ]

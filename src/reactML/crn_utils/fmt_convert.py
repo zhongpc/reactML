@@ -13,7 +13,6 @@ try:
 except ImportError:
     OBABEL_AVAIL = False
 
-
 # registries for conversion functions
 from_registry: Dict[str, Callable] = {}
 to_registry: Dict[str, Callable] = {}
@@ -38,21 +37,23 @@ def register_to(outfmt: str):
 
 
 @register_from("xyz")
-def _from_xyz(xyz: str, backend: Literal["rdkit", "openbabel"]):
+def _from_xyz(xyz: str, backend: Literal["rdkit", "openbabel"], **kwargs):
+    charge = kwargs.get("charge", 0)
     if backend == "rdkit":
         rdkit_mol = Chem.MolFromXYZBlock(xyz)
-        rdDetermineBonds.DetermineBonds(rdkit_mol)
+        rdDetermineBonds.DetermineBonds(rdkit_mol, charge=charge)
         rdkit_mol = Chem.RemoveHs(rdkit_mol)
         return rdkit_mol
     elif backend == "openbabel":
         pybel_mol = pybel.readstring("xyz", xyz)
+        pybel_mol.OBMol.SetTotalCharge(charge)
         return pybel_mol
     else:
         raise ValueError("Unsupported backend. Use 'rdkit' or 'openbabel'.")
 
 
 @register_from("smiles")
-def _from_smiles(smiles: str, backend: Literal["rdkit", "openbabel"]):
+def _from_smiles(smiles: str, backend: Literal["rdkit", "openbabel"], **kwargs):
     if backend == "rdkit":
         rdkit_mol = Chem.MolFromSmiles(smiles)
         return rdkit_mol
@@ -64,7 +65,7 @@ def _from_smiles(smiles: str, backend: Literal["rdkit", "openbabel"]):
 
 
 @register_from("inchi")
-def _from_inchi(inchi: str, backend: Literal["rdkit", "openbabel"]):
+def _from_inchi(inchi: str, backend: Literal["rdkit", "openbabel"], **kwargs):
     if backend == "rdkit":
         rdkit_mol = Chem.MolFromInchi(inchi)
         return rdkit_mol
@@ -76,7 +77,7 @@ def _from_inchi(inchi: str, backend: Literal["rdkit", "openbabel"]):
 
 
 @register_to("xyz")
-def _to_xyz(core_mol, backend: Literal["rdkit", "openbabel"]) -> str:
+def _to_xyz(core_mol, backend: Literal["rdkit", "openbabel"], **kwargs) -> str:
     if backend == "rdkit":
         assert isinstance(core_mol, Chem.Mol)
         core_mol = Chem.AddHs(core_mol)
@@ -94,7 +95,7 @@ def _to_xyz(core_mol, backend: Literal["rdkit", "openbabel"]) -> str:
 
 
 @register_to("smiles")
-def _to_smiles(core_mol, backend: Literal["rdkit", "openbabel"]) -> str:
+def _to_smiles(core_mol, backend: Literal["rdkit", "openbabel"], **kwargs) -> str:
     if backend == "rdkit":
         assert isinstance(core_mol, Chem.Mol)
         smiles = Chem.MolToSmiles(core_mol)
@@ -107,7 +108,7 @@ def _to_smiles(core_mol, backend: Literal["rdkit", "openbabel"]) -> str:
 
 
 @register_to("inchi")
-def _to_inchi(core_mol, backend: Literal["rdkit", "openbabel"]) -> str:
+def _to_inchi(core_mol, backend: Literal["rdkit", "openbabel"], **kwargs) -> str:
     if backend == "rdkit":
         assert isinstance(core_mol, Chem.Mol)
         inchi = Chem.MolToInchi(core_mol)
@@ -117,6 +118,19 @@ def _to_inchi(core_mol, backend: Literal["rdkit", "openbabel"]) -> str:
     else:
         raise ValueError("Unsupported backend. Use 'rdkit' or 'openbabel'.")
     return inchi
+
+
+@register_to("inchikey")
+def _to_inchikey(core_mol, backend: Literal["rdkit", "openbabel"], **kwargs) -> str:
+    if backend == "rdkit":
+        assert isinstance(core_mol, Chem.Mol)
+        inchikey = Chem.MolToInchiKey(core_mol)
+    elif backend == "openbabel":
+        assert isinstance(core_mol, pybel.Molecule)
+        inchikey = core_mol.write("inchikey").strip()
+    else:
+        raise ValueError("Unsupported backend. Use 'rdkit' or 'openbabel'.")
+    return inchikey
 
 
 def convert(
