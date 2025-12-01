@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 from pyscf.gto import charge, Mole
 from pyscf.lib import GradScanner
@@ -14,10 +15,17 @@ class PySCFCalculator(Calculator):
     """
     implemented_properties = ["energy", "forces"]
     default_parameters = {}
-    def __init__(self, method, xc_3c=None, **kwargs):
+    def __init__(self, method, xc_3c=None, soscf=False, max_unconverged_steps=None, **kwargs):
         self.method = method
         self.g_scanner: GradScanner = get_gradient_method(self.method, xc_3c).as_scanner()
+        self.soscf = soscf
+        self.max_unconverged_steps = sys.maxsize if max_unconverged_steps is None else max_unconverged_steps
+        self.num_unconverged = 0
         Calculator.__init__(self, **kwargs)
+
+    def set_max_unconverged_steps(self, tol: int = None):
+        self.max_unconverged_steps = sys.maxsize if tol is None else tol
+        self.num_unconverged = 0
 
     def set(self, **kwargs):
         changed_parameters = Calculator.set(self, **kwargs)
@@ -47,7 +55,21 @@ class PySCFCalculator(Calculator):
         mol.set_geom_(_atoms, unit="Angstrom")
         
         energy, gradients = self.g_scanner(mol)
-
+        if not self.g_scanner.converged and self.soscf:
+            # try SOSCF if not converged
+            newton_method = self.method.newton()
+            newton_method.reset(mol)
+            newton_method.kernel()
+            self.g_scanner.base.mo_coeff = newton_method.mo_coeff
+            self.g_scanner.base.mo_occ = newton_method.mo_occ
+            energy, gradients = self.g_scanner(mol)
+            if self.g_scanner.converged:
+                print("SOSCF converged")
+        if not self.g_scanner.converged:
+            self.num_unconverged += 1
+            if self.num_unconverged > self.max_unconverged_steps:
+                raise RuntimeError(f"SCF failed to converge after {self.num_unconverged} steps.")
+        
         # store the energy and forces
         self.results["energy"] = energy * units.Hartree
         self.results["forces"] = -gradients * (units.Hartree / units.Bohr)

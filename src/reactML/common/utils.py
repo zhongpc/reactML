@@ -1,6 +1,6 @@
 import os
 from types import MethodType
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 from pyscf import gto, lib, dft
@@ -74,12 +74,14 @@ def build_method(config: dict):
     ecp = config.get("ecp", None)
     nlc = config.get("nlc", "")
     disp = config.get("disp", None)
-    grids = config.get("grids", {"atom_grid": (99, 590)})
-    nlcgrids = config.get("nlcgrids", {"atom_grid": (50, 194)})
+    grids = config.get("grids", None)
+    nlcgrids = config.get("nlcgrids", None)
     verbose = config.get("verbose", 4)
     scf_conv_tol = config.get("scf_conv_tol", 1e-8)
     direct_scf_tol = config.get("direct_scf_tol", 1e-8)
     scf_max_cycle = config.get("scf_max_cycle", 50)
+    level_shift = config.get("level_shift", 0.0)
+    diis_space = config.get("diis_space", 8)
     with_df = config.get("with_df", True)
     auxbasis = config.get("auxbasis", "def2-universal-jkfit")
     with_gpu = config.get("with_gpu", True)
@@ -114,15 +116,18 @@ def build_method(config: dict):
     mf.nlc = nlc
     mf.disp = disp
     # set grids
-    if "atom_grid" in grids:
-        mf.grids.atom_grid = grids["atom_grid"]
-    if "level" in grids:
-        mf.grids.level = grids["level"]
+    if grids is not None:
+        if "atom_grid" in grids:
+            mf.grids.atom_grid = grids["atom_grid"]
+        elif "level" in grids:
+            mf.grids.level = grids["level"]
+    # set nlc grids
     if mf._numint.libxc.is_nlc(mf.xc) or nlc is not None:
-        if "atom_grid" in nlcgrids:
-            mf.nlcgrids.atom_grid = nlcgrids["atom_grid"]
-        if "level" in nlcgrids:
-            mf.nlcgrids.level = nlcgrids["level"]
+        if nlcgrids is not None:
+            if "atom_grid" in nlcgrids:
+                mf.nlcgrids.atom_grid = nlcgrids["atom_grid"]
+            if "level" in nlcgrids:
+                mf.nlcgrids.level = nlcgrids["level"]
     # set density fitting
     if with_df:
         mf = mf.density_fit(auxbasis=auxbasis)
@@ -169,17 +174,20 @@ def build_method(config: dict):
     mf.chkfile = None
     mf.conv_tol = float(scf_conv_tol)
     mf.max_cycle = scf_max_cycle
+    mf.level_shift = float(level_shift)
+    mf.diis_space = int(diis_space)
 
     return mf
 
 
 def build_3c_method(config: dict):
     """
-    Special cases for 3c methods, e.g., B97-3c
+    Special cases for 3c methods, e.g., B973c
     """
-    xc = config.get("xc", "B97-3c")
+    xc: str = config.get("xc", "B973c")
     if not xc.endswith("3c"):
-        raise ValueError("The xc functional must be a 3c method, e.g., B97-3c.")
+        raise ValueError("The xc functional must be a 3c method, e.g., B973c.")
+    xc = xc.replace("-3c", "3c")
     from gpu4pyscf.drivers.dft_3c_driver import parse_3c, gen_disp_fun
     
     # modify config dictionary
@@ -199,7 +207,7 @@ def build_3c_method(config: dict):
     return mf
 
 
-def get_gradient_method(mf, xc_3c=None):
+def get_gradient_method(mf, xc_3c: Optional[str] = None):
     """
     Get the gradient method from a mean field object.
     Args:
@@ -211,6 +219,7 @@ def get_gradient_method(mf, xc_3c=None):
     if xc_3c is not None:
         if not xc_3c.endswith("3c"):
             raise ValueError("The xc functional must be a 3c method, e.g., B97-3c.")
+        xc_3c = xc_3c.replace("-3c", "3c")
         from gpu4pyscf.drivers.dft_3c_driver import parse_3c, gen_disp_grad_fun
         _, _, _, _, (xc_disp, disp), xc_gcp = parse_3c(xc_3c.lower())
         g = mf.nuc_grad_method()
@@ -241,4 +250,5 @@ def get_Hessian_method(mf, xc_3c=None):
     
     h = mf.Hessian()
     h.auxbasis_response = 2
+    h.grid_response = True
     return h
