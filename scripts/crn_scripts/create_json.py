@@ -13,13 +13,19 @@ from reactML.crn_utils.fmt_convert import convert
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=str, default=None, help="Path to config file (not used in this script)."
+        "--config", "-c", type=str, default=None, help="Path to config file (not used in this script)."
     )
     parser.add_argument(
-        "--smiles", type=str, default=None, help="SMILES string of the molecule (not used in this script)."
+        "--filename", "-f", type=str, default=None, help="Base filename for input/output (not used in this script)."
     )
     parser.add_argument(
-        "--backend", type=str, default=None, help="Backend to use: 'rdkit' or 'openbabel'."
+        "--smiles", "-s", type=str, default=None, help="SMILES string of the molecule (not used in this script)."
+    )
+    parser.add_argument(
+        "--backend", "-b", type=str, default=None, help="Backend to use: 'rdkit' or 'openbabel'."
+    )
+    parser.add_argument(
+        "--note", "-n", type=str, default="", help="Note to add to the molecule record."
     )
     args = parser.parse_args()
 
@@ -46,8 +52,12 @@ def main():
             level_of_theory += f"/{solv_method}"
 
     # load molecule from xyz
-    inputfile: str = config["inputfile"]
-    filename: str = inputfile.rsplit('.', 1)[0]
+    if args.filename is None:
+        inputfile: str = config["inputfile"]
+        filename: str = inputfile.rsplit('.', 1)[0]
+    else:
+        filename: str = args.filename
+        inputfile: str = f"{filename}.xyz"
     datafile: str = config.get("datafile", f"{filename}_data.h5")
     # if opt in datafile name, replace with geom opt
     ran_opt: bool = config.get("opt", False)
@@ -94,7 +104,7 @@ def main():
         inchikey=inchikey,
         charge=charge,
         multiplicity=multiplicity,
-        note=f"Created from {inputfile} at level of theory {level_of_theory}",
+        note=args.note if args.note else f"Created from {inputfile} at level of theory {level_of_theory}",
     )
     # add method results from datafile if exists
     if os.path.exists(datafile):

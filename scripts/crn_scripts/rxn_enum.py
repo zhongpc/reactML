@@ -33,6 +33,21 @@ def get_extented_box(atoms: Atoms, padding: float = 0.0) -> list:
     return np.array([[x_min, x_max], [y_min, y_max], [z_min, z_max]])
 
 
+def separate_two_xyz(xyzfiles: str, keep_files: bool = True) -> None:
+    """Separate reactions from a combined xyz file.
+
+    Args:
+        xyzfiles (str): Path to the combined xyz file.
+    """
+    atoms_rxn = ase.io.read(xyzfiles, index=':')
+    assert len(atoms_rxn) == 2, "The combined xyz file should contain exactly two structures."
+    filename = xyzfiles.rsplit('.', 1)[0]
+    ase.io.write(f"{filename}_r.xyz", atoms_rxn[0])
+    ase.io.write(f"{filename}_p.xyz", atoms_rxn[1])
+    if not keep_files:
+        os.remove(xyzfiles)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -102,7 +117,9 @@ def main():
     rcs_filter: bool = config.get("rcs_filter", True)
     rcs_threshold: float = config.get("rcs_threshold", 0.3)
     model_path: str = config.get("model_path", None)
-    xyzfiles_all = []
+    separate_reactions: bool = config.get("separate_reactions", False)
+    keep_files: bool = config.get("keep_files", True)
+    reaction_names_all = []
     if rcs_filter and model_path is None:
         raise ValueError("rcs_filter is set to True, but no model_path is provided in the config.")
     # 1. sinlge molecule reactions
@@ -123,15 +140,19 @@ def main():
         subdir = os.path.join(reactions_dir, name)
         rmol = yamol(rinp)
         os.makedirs(subdir, exist_ok=True)
-        xyzfiles = create_reaction_xyzs(
+        reaction_names = create_reaction_xyzs(
             rmol, reactions, work_folder=xtb_temp_dir,
             output_folder=subdir, model_path=model_path,
             n_workers=n_workers, xtb_opt=xtb_opt,
             rcs_filter=rcs_filter, rcs_thresh=rcs_threshold,
             message=False, use_changed_geometry=True,
         )
-        print(f"Generated {len(xyzfiles)} reaction xyz files for molecule '{name}'.")
-        xyzfiles_all.extend(xyzfiles)
+        if separate_reactions:
+            for reaction_name in reaction_names:
+                xyzfile = f"{reaction_name}.xyz"
+                separate_two_xyz(os.path.join(subdir, xyzfile), keep_files=keep_files)
+        print(f"Generated {len(reaction_names)} reaction xyz files for molecule '{name}'.")
+        reaction_names_all.extend(reaction_names)
     
     # 2. bimolecular reactions
     mixed_inputs = inputs + base_inputs
@@ -177,18 +198,21 @@ def main():
             subdir = os.path.join(reactions_dir, name)
             rmol = yamol(rinp)
             os.makedirs(subdir, exist_ok=True)
-            xyzfiles = create_reaction_xyzs(
+            reaction_names = create_reaction_xyzs(
                 rmol, reactions, work_folder=xtb_temp_dir,
                 output_folder=subdir, model_path=model_path,
                 n_workers=n_workers, xtb_opt=xtb_opt,
                 rcs_filter=rcs_filter, rcs_thresh=rcs_threshold,
                 message=False, use_changed_geometry=True,
             )
-            print(f"Generated {len(xyzfiles)} reaction xyz files for molecule pair '{name}'.")
-            xyzfiles_all.extend(xyzfiles)
-    print(f"Total {len(xyzfiles_all)} reaction xyz files generated in '{reactions_dir}'.")
-
-
+            if separate_reactions:
+                for reaction_name in reaction_names:
+                    separate_two_xyz(os.path.join(subdir, f"{reaction_name}.xyz"), keep_files=keep_files)
+            print(f"Generated {len(reaction_names)} reaction xyz files for molecule pair '{name}'.")
+            reaction_names_all.extend(reaction_names)
+    print(f"Total {len(reaction_names_all)} reaction xyz files generated in '{reactions_dir}'.")
+    for reaction_name in reaction_names_all:
+        print(reaction_name)
 
 if __name__ == "__main__":
     main()

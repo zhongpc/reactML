@@ -1,4 +1,4 @@
-from typing import List, Iterable, Dict, Literal
+from typing import List, Iterable, Dict, Literal, Union
 from collections import Counter
 from datetime import datetime
 
@@ -168,8 +168,8 @@ class ReactionRecord:
         elements: List[str],
         reactant_coords: Iterable,
         product_coords: Iterable,
-        reactant_inchikeys: List[str],
-        product_inchikeys: List[str],
+        reactant_inchikeys: Union[List[str], Dict[str, int]],
+        product_inchikeys: Union[List[str], Dict[str, int]],
         charge: int = 0,
         multiplicity: int = 1,  # assume adiabatic PES
         note: str = None,
@@ -195,8 +195,18 @@ class ReactionRecord:
         self.reaction_results: dict = None
 
         # Use Counter to count occurrences, convert to dict for plain-mapping behaviour
-        self.reactant_inchikeys = dict(Counter(reactant_inchikeys))
-        self.product_inchikeys = dict(Counter(product_inchikeys))
+        if isinstance(reactant_inchikeys, dict):
+            self.reactant_inchikeys = reactant_inchikeys
+        elif isinstance(reactant_inchikeys, list):
+            self.reactant_inchikeys = dict(Counter(reactant_inchikeys))
+        else:
+            raise ValueError("reactant_inchikeys must be a list or dict")
+        if isinstance(product_inchikeys, dict):
+            self.product_inchikeys = product_inchikeys
+        elif isinstance(product_inchikeys, list):
+            self.product_inchikeys = dict(Counter(product_inchikeys))
+        else:
+            raise ValueError("product_inchikeys must be a list or dict")
         self.note = note
         self.date = date if date is not None else datetime.today().strftime("%Y-%m-%d")
 
@@ -272,8 +282,8 @@ class ReactionRecord:
             elements=d["elements"],
             reactant_coords=d["reactant_coords"],
             product_coords=d["product_coords"],
-            reactant_inchikeys=list(d["reactant_inchikeys"].keys()),
-            product_inchikeys=list(d["product_inchikeys"].keys()),
+            reactant_inchikeys=d["reactant_inchikeys"],
+            product_inchikeys=d["product_inchikeys"],
             charge=d.get("charge", 0),
             multiplicity=d.get("multiplicity", 1),
             note=d.get("note", None),

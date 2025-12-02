@@ -39,6 +39,7 @@ def register_to(outfmt: str):
 @register_from("xyz")
 def _from_xyz(xyz: str, backend: Literal["rdkit", "openbabel"], **kwargs):
     charge = kwargs.get("charge", 0)
+    mutliplicity = kwargs.get("multiplicity", 1)
     if backend == "rdkit":
         rdkit_mol = Chem.MolFromXYZBlock(xyz)
         rdDetermineBonds.DetermineBonds(rdkit_mol, charge=charge)
@@ -47,6 +48,7 @@ def _from_xyz(xyz: str, backend: Literal["rdkit", "openbabel"], **kwargs):
     elif backend == "openbabel":
         pybel_mol = pybel.readstring("xyz", xyz)
         pybel_mol.OBMol.SetTotalCharge(charge)
+        pybel_mol.OBMol.SetTotalSpinMultiplicity(mutliplicity)
         return pybel_mol
     else:
         raise ValueError("Unsupported backend. Use 'rdkit' or 'openbabel'.")
@@ -174,20 +176,19 @@ def convert(
 
 
 if __name__ == "__main__":
-    test_smiles = "CCO"
+    test_smiles = "[Na+][O]=C1OCCO1"
     rdkit_xyz = convert(
         in_data=test_smiles,
         infmt="smiles",
         outfmt="xyz",
-        backend="openbabel",
+        backend="rdkit",
     )
-    print("XYZ output from SMILES input:")
     print(rdkit_xyz)
     rdkit_smiles = convert(
         in_data=rdkit_xyz,
         infmt="xyz",
         outfmt="smiles",
-        backend="openbabel",
+        backend="rdkit",
+        charge=1,
     )
-    print("SMILES output from XYZ input:")
     print(rdkit_smiles)
