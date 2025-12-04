@@ -11,6 +11,7 @@ import h5py
 import torch
 from ase import units
 from sella import Sella, IRC, Constraints
+from sella.optimize.irc import IRCInnerLoopConvergenceFailure
 from pyscf import gto, symm
 from pyscf.hessian import thermo
 
@@ -381,10 +382,14 @@ def main():
         pos_init = atoms.get_positions().copy()
         if direction in ["forward", "both"]:
             print("Starting forward IRC")
-            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
-            if not irc_converged:
-                Warning("Forward IRC did not converge within the maximum number of steps.")
-            ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
+            try:
+                irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="forward")
+            except IRCInnerLoopConvergenceFailure as e:
+                Warning("IRC inner loop failed to converge: " + str(e))
+                irc_converged = False
+            finally:
+                print(f"IRC completed. Converged: {irc_converged}")
+                ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
         
         # reverse direction
         if direction in ["reverse", "both"]:
@@ -392,10 +397,14 @@ def main():
             # reset to initial position
             sella_irc.v0ts = None
             atoms.set_positions(pos_init)
-            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
-            if not irc_converged:
-                Warning("Reverse IRC did not converge within the maximum number of steps.")
-            ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
+            try:
+                irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
+            except IRCInnerLoopConvergenceFailure as e:
+                Warning("IRC inner loop failed to converge: " + str(e))
+                irc_converged = False
+            finally:
+                print(f"IRC completed. Converged: {irc_converged}")
+                ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
         
         end_time = time.time()
         print(f"IRC calculation completed in {end_time - start_time:.2f} seconds.")

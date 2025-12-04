@@ -1,11 +1,13 @@
 import os
 import argparse
+from types import MethodType
+from copy import copy
 
 import numpy as np
 import ase.io
 import yaml
 from pyscf import symm
-from ase.mep import NEB
+from ase.mep import AutoNEB, NEB
 from ase.optimize import FIRE
 from ase import units
 
@@ -28,38 +30,23 @@ def main():
     if "symm_geom_tol" in config:
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
 
-    # create images
-    read_images: str = config.get("read_images", None)
-    if read_images is not None:  # read images
-        images = ase.io.read(read_images, index=":")
-        init_atoms = images[0]
-        filename = read_images.rsplit(".", 1)[0]
-    else:  # interpolate images
-        # read the initial and final geometries
-        inputfile: str = config.get("inputfile", "mol.xyz")
-        filename = inputfile.rsplit(".", 1)[0]
-        atoms_list = ase.io.read(inputfile, index=":")
-        assert len(atoms_list) == 2, "Input file must contain exactly two structures: initial and final geometries."
-        init_atoms, final_atoms = atoms_list[0], atoms_list[-1]
-        assert np.all(init_atoms.symbols == final_atoms.symbols), \
-            "Initial and final geometries must have the same atoms."
-        images = [init_atoms]
-        num_images = config.get("num_images", 5)
-        for _ in range(num_images):
-            images.append(init_atoms.copy())
-        images.append(final_atoms)
+    # read the initial and final geometries
+    inputfile: str = config.get("inputfile", "mol.xyz")
+    filename = inputfile.rsplit(".", 1)[0]
+    atoms_list = ase.io.read(inputfile, index=":")
+    assert len(atoms_list) == 2, "Input file must contain exactly two structures: initial and final geometries."
+    init_atoms, final_atoms = atoms_list[0], atoms_list[-1]
+    assert np.all(init_atoms.symbols == final_atoms.symbols), \
+        "Initial and final geometries must have the same atoms."
 
     # build method
     # replace inputfile
+    charge = config.get("charge", 0)
+    multiplicity = config.get("spin", 0) + 1  # PySCF uses 2S, MLIP uses 2S+1
     input_atoms_list = [(ele, coord) for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
     config["inputfile"] = input_atoms_list  # fake inputfile but input list
     if "mlip" in config:
         assert "xc" not in config, "Please do not specify 'xc' when using MLIP."
-        charge = config.get("charge", 0)
-        spin = config.get("spin", 0)
-        for image in images:
-            image.info["charge"] = charge
-            image.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
         if config["mlip"] == "uma":
             from fairchem.core import FAIRChemCalculator, pretrained_mlip
             from omegaconf import OmegaConf
@@ -88,6 +75,7 @@ def main():
     else:
         raise ValueError("Please specify either 'mlip' or 'xc' in the config file.")
 
+    max_images: int = config.get("max_images", 11)
     fmax = float(config.get("fmax", 0.05))  # in eV/Angstrom
     use_climb = config.get("climb", False)
     max_steps = int(config.get("max_steps", 1000))
@@ -95,81 +83,69 @@ def main():
     method: str = config.get("neb_method", "improvedtangent")
     opt_terminal: bool = config.get("optimize_terminal", True)
     interpolate_method: str = config.get("interpolate_method", "idpp")
-    # set up the NEB
-    ci_after_n_steps: int = config.get("ci_after_n_steps", None)
-    assert (ci_after_n_steps is None) ^ use_climb, \
-        "If turning on CI-NEB, please specify 'ci_after_n_steps' in the config file.\n\
-            If setting 'ci_after_n_steps', please also turn on CI-NEB."
-    if ci_after_n_steps is not None:
-        print(f"Climbing-image NEB will start after {ci_after_n_steps} steps.")
 
-    neb = NEB(
-        images=images,
-        k=spring_constant,
-        climb=False,
-        remove_rotation_and_translation=True,
-        method=method,
-        allow_shared_calculator=True,
-    )
-    if read_images is None:
+    def attach_calculator(images):
+        for image in images:
+            image.info["charge"] = charge
+            image.info["spin"] = multiplicity  # MLIP uses 2S+1, PySCF uses 2S
+            if not isinstance(image.calc, type(calc)):
+                image.calc = copy(calc)
+    
+    regenerate_terminal: bool = config.get("regenerate_terminal", False)
+    if regenerate_terminal:
+        images = [init_atoms]
+        for _ in range(max_images):
+            images.append(init_atoms.copy())
+        images.append(final_atoms)
+        attach_calculator(images)
+        neb = NEB(images=images, method=method, allow_shared_calculator=True)
         neb.interpolate(interpolate_method)
-
-    # set up calculators
-    for i, image in enumerate(images):
-        image.calc = calc
-
-    regenerate_terminal = config.get("regenerate_terminal", False)
-    if regenerate_terminal and read_images is not None:
-        # first find the highest energy image
-        print("Regenerating the terminal images")
-        energies = np.array([image.get_potential_energy() for image in images])
-        max_energy_index = np.argmax(energies)
-        # optimize the left one and the right one
-        images[0].set_positions(images[max_energy_index - 1].positions)
-        images[-1].set_positions(images[max_energy_index + 1].positions)
+        energies = [image.get_potential_energy() for image in images]
+        max_energy_index = energies.index(max(energies))
+        init_atoms.set_positions(images[max_energy_index - 1].positions)
+        final_atoms.set_positions(images[max_energy_index + 1].positions)
 
     # optimize the terminal images first
-    if read_images is None and (opt_terminal or regenerate_terminal):
+    if opt_terminal or regenerate_terminal:
+        attach_calculator([init_atoms, final_atoms])
         print("Optimizing the initial image.")
-        with FIRE(images[0]) as opt0:
+        with FIRE(init_atoms) as opt0:
             opt0.run(fmax=fmax)
         print("Optimizing the final image.")
-        with FIRE(images[-1]) as opt1:
+        with FIRE(final_atoms) as opt1:
             opt1.run(fmax=fmax)
         del opt0, opt1
-        # re-interpolate
-        neb.interpolate(interpolate_method)
 
-    # set up the optimizer
-    trajectory = config.get("trajectory", f"{filename}_neb.traj")
-    opt = FIRE(neb, trajectory=trajectory)
-    max_steps = config.get("neb_max_steps", 1000)
-    steps = max_steps if ci_after_n_steps is None else ci_after_n_steps
-    converged = opt.run(fmax=fmax, steps=steps)
-    if ci_after_n_steps is not None:
-        ci_neb = NEB(
-            images=images,
-            k=spring_constant,
-            climb=True,
-            remove_rotation_and_translation=True,
-            method=method,
-            allow_shared_calculator=True,
-        )
-        opt = FIRE(
-            ci_neb,
-            trajectory=trajectory,
-            append_trajectory=True,
-        )
-        converged = opt.run(fmax=fmax, steps=max_steps-ci_after_n_steps)
-        images = ci_neb.images
-    else:
-        images = neb.images
+    # write the initial and final to prefix_000.traj and prefix_001.traj
+    ase.io.write(f"{filename}_000.traj", init_atoms)
+    ase.io.write(f"{filename}_001.traj", final_atoms)
 
-    # check convergence
-    if converged:
-        print("NEB optimization converged successfully.")
-    else:
-        print("NEB failed to converge within the maximum number of steps.")
+    def patched_get_energies(self: AutoNEB):
+        energies = []
+        for a in self.all_images:
+            if not isinstance(a.calc, type(calc)):
+                a.calc = copy(calc)
+            energies.append(a.get_potential_energy())
+        return np.array(energies)
+
+    autoneb = AutoNEB(
+        attach_calculators=attach_calculator,
+        iter_folder=f"{filename}_iter",
+        prefix=f"{filename}_",
+        n_simul=1,
+        n_max=max_images,
+        climb=use_climb,
+        fmax=fmax,
+        maxsteps=max_steps,
+        k=spring_constant,
+        method=method,
+        optimizer=FIRE,
+        interpolate_method=interpolate_method,
+        parallel=False,
+    )
+    autoneb.get_energies = MethodType(patched_get_energies, autoneb)
+    images = autoneb.run()
+
     # save the final images
     images_filename = f"{filename}_neb.xyz"
     ase.io.write(images_filename, images, format="extxyz")

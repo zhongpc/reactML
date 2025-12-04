@@ -97,25 +97,22 @@ def main():
     # separate smiles
     print(f"Reactant SMILES: {react_smiles}")
     print(f"Product SMILES: {prod_smiles}")
-    react_smiles_list = react_smiles.split('.')
-    prod_smiles_list = prod_smiles.split('.')
-    # convert to inchikeys
-    react_inchikeys = [convert(smi, infmt='smiles', outfmt='inchikey', backend=backend) for smi in react_smiles_list]
-    prod_inchikeys = [convert(smi, infmt='smiles', outfmt='inchikey', backend=backend) for smi in prod_smiles_list]
-
     # create reaction record
-    reaction_record = ReactionRecord(
-        elements=react_atoms.get_chemical_symbols(),
-        reactant_coords=react_atoms.get_positions().tolist(),
-        product_coords=prod_atoms.get_positions().tolist(),
-        reactant_inchikeys=react_inchikeys,
-        product_inchikeys=prod_inchikeys,
-        charge=charge,
-        multiplicity=multiplicity,
-        note=args.note if args.note else f"Created from {react_xyzfile} and {prod_xyzfile} at level of theory {level_of_theory}",
-    )
+    try:
+        reaction_record = ReactionRecord(
+            elements=react_atoms.get_chemical_symbols(),
+            reactant_coords=react_atoms.get_positions().tolist(),
+            product_coords=prod_atoms.get_positions().tolist(),
+            reactant_smiles=react_smiles,
+            product_smiles=prod_smiles,
+            charge=charge,
+            multiplicity=multiplicity,
+            note=args.note if args.note else f"Created from {react_xyzfile} and {prod_xyzfile} at level of theory {level_of_theory}",
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to create ReactionRecord for {filename}: {e}")
     if reaction_record.reactant_inchikeys == reaction_record.product_inchikeys:
-        print("Warning: Reactant and product inchikeys are the same.")
+        print(f"Warning: Reactant and product inchikeys are the same in {filename}.")
         exit(1)
     
     # read the results from datafiles if exist
@@ -174,7 +171,7 @@ def main():
         reaction_results=rxn_results,
     )
     # dump to json
-    json_file = f"{filename}_reaction.json"
+    json_file = f"{filename}.json"
     if os.path.exists(json_file):
         os.rename(json_file, f"{json_file}.bak")
     dumpfn(reaction_record.to_dict(), json_file, indent=2)

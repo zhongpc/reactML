@@ -168,8 +168,10 @@ class ReactionRecord:
         elements: List[str],
         reactant_coords: Iterable,
         product_coords: Iterable,
-        reactant_inchikeys: Union[List[str], Dict[str, int]],
-        product_inchikeys: Union[List[str], Dict[str, int]],
+        reactant_smiles: str,
+        product_smiles: str,
+        reactant_inchikeys: Dict[str, int] = None,
+        product_inchikeys: Dict[str, int] = None,
         charge: int = 0,
         multiplicity: int = 1,  # assume adiabatic PES
         note: str = None,
@@ -194,19 +196,18 @@ class ReactionRecord:
         self.product_results: dict = None
         self.reaction_results: dict = None
 
-        # Use Counter to count occurrences, convert to dict for plain-mapping behaviour
-        if isinstance(reactant_inchikeys, dict):
+        self.reactant_smiles = reactant_smiles
+        self.product_smiles = product_smiles
+        if reactant_inchikeys is None:
+            react_smiles_list = reactant_smiles.split('.')
+            self.reactant_inchikeys = dict(Counter([convert(smi, infmt='smiles', outfmt='inchikey', backend='rdkit') for smi in react_smiles_list]))
+        else:
             self.reactant_inchikeys = reactant_inchikeys
-        elif isinstance(reactant_inchikeys, list):
-            self.reactant_inchikeys = dict(Counter(reactant_inchikeys))
+        if product_inchikeys is None:
+            prod_smiles_list = product_smiles.split('.')
+            self.product_inchikeys = dict(Counter([convert(smi, infmt='smiles', outfmt='inchikey', backend='rdkit') for smi in prod_smiles_list]))
         else:
-            raise ValueError("reactant_inchikeys must be a list or dict")
-        if isinstance(product_inchikeys, dict):
             self.product_inchikeys = product_inchikeys
-        elif isinstance(product_inchikeys, list):
-            self.product_inchikeys = dict(Counter(product_inchikeys))
-        else:
-            raise ValueError("product_inchikeys must be a list or dict")
         self.note = note
         self.date = date if date is not None else datetime.today().strftime("%Y-%m-%d")
 
@@ -257,6 +258,8 @@ class ReactionRecord:
             "elements": self.elements,
             "reactant_coords": self.reactant_coords,
             "product_coords": self.product_coords,
+            "reactant_smiles": self.reactant_smiles,
+            "product_smiles": self.product_smiles,
             "reactant_inchikeys": self.reactant_inchikeys,
             "product_inchikeys": self.product_inchikeys,
             "charge": self.charge,
@@ -282,8 +285,10 @@ class ReactionRecord:
             elements=d["elements"],
             reactant_coords=d["reactant_coords"],
             product_coords=d["product_coords"],
-            reactant_inchikeys=d["reactant_inchikeys"],
-            product_inchikeys=d["product_inchikeys"],
+            reactant_smiles=d["reactant_smiles"],
+            product_smiles=d["product_smiles"],
+            reactant_inchikeys=d.get("reactant_inchikeys", None),
+            product_inchikeys=d.get("product_inchikeys", None),
             charge=d.get("charge", 0),
             multiplicity=d.get("multiplicity", 1),
             note=d.get("note", None),
@@ -360,41 +365,6 @@ class ReactionRecord:
         """
         return (self.reactant_inchikeys == other.reactant_inchikeys) and (self.product_inchikeys == other.product_inchikeys)
 
-    def _to_smiles(self, inchikeys: Dict[str, int], backend: Literal["rdkit", "openbabel"]) -> str:
-        """
-        Generate a combined SMILES string for given InChIKeys
-
-        Args:
-            inchikeys: a dictionary of InChIKeys and their counts
-            backend: the cheminformatics backend to use ("rdkit" or "openbabel")
-        Returns:
-            A combined SMILES string representing the molecules
-        """
-        smiles_list = []
-        for inchikey, count in inchikeys.items():
-            smiles = convert(in_data=inchikey, infmt="inchikey", outfmt="smiles", backend=backend)
-            smiles_list.extend([smiles for _ in range(count)])
-        combined_smiles = ".".join(sorted(smiles_list))
-        return combined_smiles
-
-    def reactants_to_smiles(self, backend: Literal["rdkit", "openbabel"]) -> str:
-        """
-        Generate a combined SMILES string for the reactants
-
-        Returns:
-            A combined SMILES string representing the reactants
-        """
-        return self._to_smiles(self.reactant_inchikeys, backend)
-    
-    def products_to_smiles(self, backend: Literal["rdkit", "openbabel"]) -> str:
-        """
-        Generate a combined SMILES string for the products
-
-        Returns:
-            A combined SMILES string representing the products
-        """
-        return self._to_smiles(self.product_inchikeys, backend)
-
     @property
     def reaction_smiles(self) -> str:
         """
@@ -403,9 +373,7 @@ class ReactionRecord:
         Returns:
             A reaction SMILES string
         """
-        reactant_smiles = self.reactants_to_smiles(backend="rdkit")
-        product_smiles = self.products_to_smiles(backend="rdkit")
-        return f"{reactant_smiles} -> {product_smiles}"
+        return f"{self.reactant_smiles} -> {self.product_smiles}"
     
     def __repr__(self) -> str:
         return f"ReactionRecord({self.reaction_smiles})"

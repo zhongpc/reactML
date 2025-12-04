@@ -1,3 +1,4 @@
+import os
 import argparse
 
 import numpy as np
@@ -50,22 +51,22 @@ def main():
     # replace inputfile
     input_atoms_list = [(ele, coord) for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
     config["inputfile"] = input_atoms_list  # fake inputfile but input list
+    charge = config.get("charge", 0)
+    multiplicity = config.get("spin", 0) + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
     if "mlip" in config:
         assert "xc" not in config, "Please do not specify 'xc' when using MLIP."
-        charge = config.get("charge", 0)
-        spin = config.get("spin", 0)
         for atoms in [init_atoms, final_atoms]:
             atoms.info["charge"] = charge
-            atoms.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
+            atoms.info["spin"] = multiplicity
         if config["mlip"] == "uma":
             from fairchem.core import FAIRChemCalculator, pretrained_mlip
             from omegaconf import OmegaConf
             device: str = config.get("device", None)
             model: str = config["model"]
-            task: str = config.get("task", "omol")
+            task_name: str = config.get("task_name", "omol")
             atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
             predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
-            calc = FAIRChemCalculator(predictor, task=task)
+            calc = FAIRChemCalculator(predictor, task_name=task_name)
         else:
             raise NotImplementedError(f"Unknown MLIP: {config['mlip']}")
     elif "xc" in config:
@@ -102,7 +103,7 @@ def main():
     # set level of theory
     ID = config.get("task_id", 0)
     input_geom = [[ele, *coord] for ele, coord in zip(init_atoms.symbols, init_atoms.positions)]
-    lot = ASELoT.from_options(calculator=calc, geom=input_geom, ID=ID)
+    lot = ASELoT.from_options(calculator=calc, charge=charge, multiplicity=multiplicity, geom=input_geom, ID=ID)
     # set potential energy surface
     pes = PES.from_options(lot=lot, ad_idx=0)
     # build the topology
