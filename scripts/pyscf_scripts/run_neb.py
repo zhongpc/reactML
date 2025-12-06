@@ -93,7 +93,7 @@ def main():
     max_steps = int(config.get("max_steps", 1000))
     spring_constant: float = float(config.get("spring_constant", 0.1))
     method: str = config.get("neb_method", "improvedtangent")
-    opt_terminal: bool = config.get("optimize_terminal", True)
+    optimize_terminal: bool = config.get("optimize_terminal", True)
     interpolate_method: str = config.get("interpolate_method", "idpp")
     # set up the NEB
     ci_after_n_steps: int = config.get("ci_after_n_steps", None)
@@ -129,7 +129,7 @@ def main():
         images[-1].set_positions(images[max_energy_index + 1].positions)
 
     # optimize the terminal images first
-    if read_images is None and (opt_terminal or regenerate_terminal):
+    if read_images is None and (optimize_terminal or regenerate_terminal):
         print("Optimizing the initial image.")
         with FIRE(images[0]) as opt0:
             opt0.run(fmax=fmax)

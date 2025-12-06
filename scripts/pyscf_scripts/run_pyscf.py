@@ -366,12 +366,13 @@ def main():
 
     # task 5: IRC
     run_irc = config.get("irc", False)
+    irc_trajectory: str = config.get("irc_trajectory", f"{filename}_irc.traj")
     if run_irc:
         start_time = time.time()
         irc_config: dict = config.get("irc_config", {})
         sella_irc = IRC(
             atoms=atoms,
-            trajectory=irc_config.get("irc_trajectory", f"{filename}_irc.traj"),
+            trajectory=irc_trajectory,
             ninner_iter=irc_config.get("ninner_iter", 10),
             dx=float(irc_config.get("dx", 0.1)),
             eta=float(irc_config.get("eta", 1e-4)),
@@ -387,26 +388,11 @@ def main():
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
 
-        # forward direction
+        # reverse direction
         # record the initial position
         pos_init = atoms.get_positions().copy()
-        if direction in ["forward", "both"]:
-            print("Starting forward IRC")
-            try:
-                irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="forward")
-            except IRCInnerLoopConvergenceFailure as e:
-                Warning("IRC inner loop failed to converge: " + str(e))
-                irc_converged = False
-            finally:
-                print(f"IRC completed. Converged: {irc_converged}")
-                ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
-        
-        # reverse direction
         if direction in ["reverse", "both"]:
             print("Starting reverse IRC")
-            # reset to initial position
-            sella_irc.v0ts = None
-            atoms.set_positions(pos_init)
             try:
                 irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="reverse")
             except IRCInnerLoopConvergenceFailure as e:
@@ -415,9 +401,48 @@ def main():
             finally:
                 print(f"IRC completed. Converged: {irc_converged}")
                 ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
+            atoms_traj = ase.io.Trajectory(irc_trajectory, mode="r")
+            reverse_steps = sella_irc.nsteps
+        else:
+            reverse_steps = 0
         
+        # forward direction
+        if direction in ["forward", "both"]:
+            print("Starting forward IRC")
+            # reset to initial position
+            sella_irc.v0ts = None
+            atoms.set_positions(pos_init)
+            # reset trajectory
+            try:
+                irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="forward")
+            except IRCInnerLoopConvergenceFailure as e:
+                Warning("IRC inner loop failed to converge: " + str(e))
+                irc_converged = False
+            finally:
+                print(f"IRC completed. Converged: {irc_converged}")
+                ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
+            atoms_traj = ase.io.Trajectory(irc_trajectory, mode="r")
+            print(len(atoms_traj), "frames saved in", irc_trajectory)
+            print(sella_irc.nsteps, "IRC steps taken.")
+            forward_steps = sella_irc.nsteps
+        else:
+            forward_steps = 0
         end_time = time.time()
         print(f"IRC calculation completed in {end_time - start_time:.2f} seconds.")
+
+        save_traj_xyz: bool = irc_config.get("save_traj_xyz", False)
+        if save_traj_xyz:
+            atoms_traj = ase.io.Trajectory(irc_trajectory, mode="r")
+            atoms_traj = list(atoms_traj)
+            atoms_ts = atoms_traj[0]
+            # reverse the reverse IRC steps to maintain chronological order
+            atoms_list = atoms_traj[1:reverse_steps+1][::-1]
+            # append the TS structure
+            atoms_list.append(atoms_ts)
+            # append the forward IRC steps
+            atoms_list.extend(atoms_traj[reverse_steps+1:reverse_steps+1+forward_steps])
+            ase.io.write(f"{filename}_irc.xyz", atoms_list)
+            print(f"Full IRC path saved to {filename}_irc.xyz")
 
 
 if __name__ == "__main__":

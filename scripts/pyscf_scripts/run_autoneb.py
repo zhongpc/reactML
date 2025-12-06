@@ -81,7 +81,7 @@ def main():
     max_steps = int(config.get("max_steps", 1000))
     spring_constant: float = float(config.get("spring_constant", 0.1))
     method: str = config.get("neb_method", "improvedtangent")
-    opt_terminal: bool = config.get("optimize_terminal", True)
+    optimize_terminal: bool = config.get("optimize_terminal", True)
     interpolate_method: str = config.get("interpolate_method", "idpp")
 
     def attach_calculator(images):
@@ -106,7 +106,7 @@ def main():
         final_atoms.set_positions(images[max_energy_index + 1].positions)
 
     # optimize the terminal images first
-    if opt_terminal or regenerate_terminal:
+    if optimize_terminal or regenerate_terminal:
         attach_calculator([init_atoms, final_atoms])
         print("Optimizing the initial image.")
         with FIRE(init_atoms) as opt0:

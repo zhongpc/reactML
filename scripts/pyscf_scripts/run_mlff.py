@@ -373,15 +373,35 @@ def main():
             hessian_function=hessian_function,
         )
         fmax: float = irc_config.get("fmax", 4.5e-4) * units.Hartree / units.Bohr
-        max_steps = irc_config.get("max_steps", 100)
+        irc_steps = irc_config.get("irc_steps", 100)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
 
-        # forward direction
+        # reverse direction
         # record the initial position
         pos_init = atoms.get_positions().copy()
+        if direction in ["reverse", "both"]:
+            print("Starting reverse IRC")
+            try:
+                irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="reverse")
+            except IRCInnerLoopConvergenceFailure as e:
+                Warning("IRC inner loop failed to converge: " + str(e))
+                irc_converged = False
+            finally:
+                print(f"IRC completed. Converged: {irc_converged}")
+                ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
+        
+        # forward direction
         if direction in ["forward", "both"]:
+            # reverse the exsiting IRC trajectory
+            atoms_traj = ase.io.Trajectory(sella_irc.trajectory, mode="r")
+            atoms_list = [atoms for atoms in atoms_traj[:-1]]  # exclude the last one to avoid duplication
+            atoms_list.reverse()
+            ase.io.write(sella_irc.trajectory, atoms_list)
             print("Starting forward IRC")
+            # reset to initial position
+            sella_irc.v0ts = None
+            atoms.set_positions(pos_init)
             try:
                 irc_converged = sella_irc.run(fmax=fmax, steps=irc_steps, direction="forward")
             except IRCInnerLoopConvergenceFailure as e:
@@ -390,21 +410,6 @@ def main():
             finally:
                 print(f"IRC completed. Converged: {irc_converged}")
                 ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
-        
-        # reverse direction
-        if direction in ["reverse", "both"]:
-            print("Starting reverse IRC")
-            # reset to initial position
-            sella_irc.v0ts = None
-            atoms.set_positions(pos_init)
-            try:
-                irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="reverse")
-            except IRCInnerLoopConvergenceFailure as e:
-                Warning("IRC inner loop failed to converge: " + str(e))
-                irc_converged = False
-            finally:
-                print(f"IRC completed. Converged: {irc_converged}")
-                ase.io.write(f"{filename}_irc_reverse.xyz", sella_irc.atoms, format="xyz")
         
         end_time = time.time()
         print(f"IRC calculation completed in {end_time - start_time:.2f} seconds.")
