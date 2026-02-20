@@ -1,195 +1,199 @@
 import argparse
-import os
 import time
 from types import SimpleNamespace
 
 import numpy as np
-import ase
 import ase.io
 import yaml
 import h5py
-import torch
-from ase import units
+from pyscf import symm, gto
+from pyscf.hessian import thermo
+from tblite.interface import Calculator
+from tblite.ase import TBLite
+from ase import Atoms, units
 from sella import Sella, IRC, Constraints
 from sella.optimize.irc import IRCInnerLoopConvergenceFailure
-from pyscf import gto, symm
-from pyscf.hessian import thermo
 
 from reactML.common.utils import dump_normal_mode
 
 
-def compute_mlff_hessian(positions: torch.Tensor, forces: torch.Tensor) -> torch.Tensor:
-    """Compute the Hessian matrix using autograd in PyTorch.
-
-    Args:
-        positions (torch.Tensor): Atomic positions with shape (N, 3).
-        forces (torch.Tensor): Forces with shape (N, 3).
-
-    Returns:
-        torch.Tensor: Hessian matrix with shape (3N, 3N).
+def xTB_numerical_hessian(
+    atomic_numbers: np.ndarray,
+    positions: np.ndarray,  # Angstrom
+    init_kwargs: dict,
+    set_kwargs: dict = None,
+    add_kwargs: dict = None,
+    h: float = 5e-3,
+) -> np.ndarray:
     """
-    forces_flat = forces.view(-1)
-    n_hess_elements = forces_flat.shape[0]  # 3N
+    Compute numerical Hessian using finite difference method.
+    Args:
+        tblite_calc: TBLite calculator instance.
+        positions: Atomic positions (in Angstrom).
+        h: Finite difference step size (in Angstrom).
+    Returns:
+        Hessian matrix (in Hartree/Bohr^2).
+    """
+    n_atoms = len(atomic_numbers)
+    hessian = np.zeros((n_atoms, n_atoms, 3, 3))
+    _positions = positions.copy() / units.Bohr  # convert to Bohr
+    _h = h / units.Bohr  # convert to Bohr
 
-    def get_vjp(v):
-        return torch.autograd.grad(
-            outputs=-forces_flat,
-            inputs=positions,
-            grad_outputs=v,
-            retain_graph=True,
-            create_graph=False,
-            allow_unused=False,
-        )
-    I_N = torch.eye(n_hess_elements, device=positions.device, dtype=positions.dtype)
-    try:
-        chunk_size = 1 if n_hess_elements < 64 else 16
-        hessian = torch.vmap(get_vjp, in_dims=0, out_dims=0, chunk_size=chunk_size)(I_N)[0]
-    except RuntimeError:
-        hessian = []
-        for grad_elem in forces_flat:
-            hess_row = torch.autograd.grad(
-                outputs=-grad_elem,
-                inputs=positions,
-                grad_outputs=torch.ones_like(grad_elem),
-                retain_graph=True,
-                create_graph=False,
-                allow_unused=False,
-            )[0]
-            hess_row = hess_row.detach()
-            hessian.append(hess_row)
-        hessian = torch.stack(hessian)
-    hessian = hessian.view(n_hess_elements, n_hess_elements)
+    assert init_kwargs, "init_kwargs must be provided"
+    for i in range(n_atoms):
+        for j in range(3):
+            displaced_plus = _positions.copy()
+            displaced_plus[i, j] += _h
+            displaced_minus = _positions.copy()
+            displaced_minus[i, j] -= _h
+            calc_plus = Calculator(
+                numbers=atomic_numbers,
+                positions=displaced_plus,
+                **init_kwargs,
+            )
+            calc_minus = Calculator(
+                numbers=atomic_numbers,
+                positions=displaced_minus,
+                **init_kwargs,
+            )
+            if set_kwargs:
+                for key, value in set_kwargs.items():
+                    calc_plus.set(key, value)
+                    calc_minus.set(key, value)
+            if add_kwargs:
+                for key, value in add_kwargs.items():
+                    calc_plus.add(key, value)
+                    calc_minus.add(key, value)
+            res_plus = calc_plus.singlepoint()
+            grad_plus = res_plus["gradient"]  # in Hartree/Bohr  
+            res_minus = calc_minus.singlepoint()
+            grad_minus = res_minus["gradient"]  # in Hartree/Bohr
+            hessian[i, :, j, :] = (grad_plus - grad_minus) / (2 * _h)
+    
+    return hessian
+
+
+CACHED_POSITION = None
+CACHED_HESSIAN = None
+
+def hessian_function(
+    atoms: Atoms,
+    init_kwargs: dict,
+    set_kwargs: dict = None,
+    add_kwargs: dict = None,
+) -> np.ndarray:
+    if CACHED_POSITION is not None and np.allclose(atoms.get_positions(), CACHED_POSITION):
+        return CACHED_HESSIAN
+    atomic_numbers = atoms.get_atomic_numbers()
+    positions = atoms.get_positions()  # in Angstrom
+    hessian = xTB_numerical_hessian(
+        atomic_numbers,
+        positions,
+        init_kwargs,
+        set_kwargs,
+        add_kwargs,
+    )
+    n_atoms = len(atomic_numbers)
+    hessian = hessian.transpose(0, 2, 1, 3).reshape(3 * n_atoms, 3 * n_atoms)
+    hessian *= (units.Hartree / units.Bohr**2)  # convert from Eh/Bohr^2
     return hessian
 
 
 def main():
+    global CACHED_POSITION, CACHED_HESSIAN
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=str, default="config.yaml",
-        help="Path to the configuration file",
+        "--config", type=str, default="tblite_config.yaml",
+        help="Path to the xTB config YAML file"
     )
     args = parser.parse_args()
 
-    with open(args.config, 'r') as f:
+    with open(args.config, "r") as f:
         config: dict = yaml.safe_load(f)
-
+    
     # setup files
     inputfile: str = config.get("inputfile", "mol.xyz")
-    filename = inputfile.rsplit('.', 1)[0]
+    filename = inputfile.rsplit(".", 1)[0]
     datafile: str = config.get("datafile", f"{filename}_data.h5")
     # empty datafile if save anything
     for key in config:
         if isinstance(key, str) and key.startswith("save_") and config[key]:
-            h5py.File(datafile, 'w').close()
+            h5py.File(datafile, "w").close()
             break
     
     # set symmetry tolerance (hardcoded in Angstrom)
     if "symm_geom_tol" in config:
         symm.geom.TOLERANCE = config["symm_geom_tol"] / units.Bohr
 
-    # load atoms
-    atoms = ase.io.read(inputfile)
-    charge = config.get("charge", 0)
-    spin = config.get("spin", 0)
-    atoms.info["charge"] = charge
-    atoms.info["spin"] = spin + 1  # Convert PySCF's 2S (args.spin) to ASE's 2S+1 by adding 1
-    
-    mlip: str = config.get("mlip", "mace")
-    device: str = config.get("device", None)
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"No device specified. Using device: {device}")
-    precision: str = config.get("precision", "float64")
-    task_name: str = config.get("task_name", "omol")
-    if mlip.lower() == "mace":
-        from mace.calculators import mace_omol
-        mace_calc = mace_omol(
-            model=config["model"],
-            device=device,
-            default_dtype=precision,
-        )
-        atoms.calc = mace_calc
-        hessian_function = lambda x: mace_calc.get_hessian(x).reshape(len(x) * 3, len(x) * 3)
-    elif mlip.lower() == "orb":
-        from orb_models.forcefield import pretrained
-        from orb_models.forcefield.calculator import ORBCalculator
-        from orb_models.forcefield.atomic_system import ase_atoms_to_atom_graphs
-        orbff = pretrained.orb_v3_conservative_omol(
-            device=device,
-            precision=precision,
-            compile=False,
-        )
-        orb_calc = ORBCalculator(orbff, device=device)
-        atoms.calc = orb_calc
-
-        def orb_hessian_function(atoms):
-            batch = ase_atoms_to_atom_graphs(
-                atoms,
-                system_config=orb_calc.system_config,
-                max_num_neighbors=orb_calc.max_num_neighbors,
-                edge_method=orb_calc.edge_method,
-                half_supercell=orb_calc.half_supercell,
-                device=orb_calc.device,
-            )
-            batch = batch.to(orb_calc.device)
-            positions = batch.node_features["positions"]
-            orbff.training = True
-            forces = orbff(batch)["grad_forces"]
-            hessian = compute_mlff_hessian(positions, forces)
-            orbff.training = False
-            return hessian.cpu().numpy()
-
-        hessian_function = orb_hessian_function
-    elif mlip.lower() == "uma":
-        from fairchem.core import FAIRChemCalculator, pretrained_mlip
-        from fairchem.core.datasets import data_list_collater
-        from omegaconf import OmegaConf
-        model: str = config["model"]
-        atom_refs = OmegaConf.load(os.path.join(model.rsplit('/', 1)[0], "iso_atom_elem_refs.yaml"))
-        predictor = pretrained_mlip.load_predict_unit(model, device=device, atom_refs=atom_refs)
-        # predictor = pretrained_mlip.get_predict_unit(model, device=device, cache_dir="/home/users/nus/zhongpc/scratch/models/uma")
-        uma_calc = FAIRChemCalculator(predictor, task_name=task_name)
-        atoms.calc = uma_calc
-        batch_size = config.get("batch_size", 128)
-        finite_diff_eps = config.get("finite_diff_eps", 5e-3)
-        def uma_hess_function(atoms: ase.Atoms):
-            eps = finite_diff_eps
-            data_list = []
-            for i in range(len(atoms)):
-                for j in range(3):
-                    displaced_plus = atoms.copy()
-                    displaced_minus = atoms.copy()
-                    displaced_plus.positions[i, j] += eps
-                    displaced_minus.positions[i, j] -= eps
-                    data_plus = uma_calc.a2g(displaced_plus)
-                    data_minus = uma_calc.a2g(displaced_minus)
-                    data_list.extend([data_plus, data_minus])
-            # batch and predict
-            forces_list = []
-            for i in range(0, len(data_list), batch_size):
-                if i + batch_size > len(data_list):
-                    data_list_batch = data_list[i:]
-                else:
-                    data_list_batch = data_list[i:i+batch_size]
-                batch = data_list_collater(data_list_batch, otf_graph=True)
-                pred = predictor.predict(batch)
-                batch_forces = pred["forces"].detach()
-                forces_list.append(batch_forces)
-            forces = torch.cat(forces_list, dim=0).reshape(-1, len(atoms), 3)
-            # calculated hessian using finite differences
-            hessian = np.zeros((len(atoms) * 3, len(atoms) * 3))
-            for i in range(len(atoms)):
-                for j in range(3):
-                    idx = i * 3 + j
-                    forces_plus = forces[2 * idx].flatten().cpu().numpy()
-                    forces_minus = forces[2 * idx + 1].flatten().cpu().numpy()
-                    hessian[:, idx] = (forces_minus - forces_plus) / (2 * eps) # forces is the negative graidents
-            return hessian
-
-        hessian_function = uma_hess_function
+    # build method
+    atoms = ase.io.read(config["inputfile"])
+    if "charge" in config:
+        atoms.info["charge"] = config["charge"]
+    elif "charge" in atoms.info:
+        config["charge"] = atoms.info["charge"]
     else:
-        raise ValueError(f"Unsupported MLIP model: {mlip}")
-    n_atoms = len(atoms)
+        raise ValueError("Charge must be specified in the configuration file or in the input XYZ file.")
+    if "multiplicity" in config:
+        atoms.info["multiplicity"] = config["multiplicity"]
+    elif "multiplicity" in atoms.info:
+        config["multiplicity"] = atoms.info["multiplicity"]
+    else:
+        raise ValueError("Multiplicity must be specified in the configuration file or in the input XYZ file.")
+    # load parameters
+    method = config.get("xtb", "GFN2-xTB")
+    charge = config["charge"]
+    multiplicity = config["multiplicity"]
+    accuracy = config.get("accuracy", 1.0)
+    eTemp = config.get("eTemp", 298.15)
+    max_iter = config.get("max_iter", 250)
+    mixer_damping = config.get("mixer_damping", 0.4)
+    electric_field = config.get("electric_field", None)
+    spin_polarization = config.get("spin_polarization", None)
+    alpb_solvation = config.get("alpb_solvation", None)
+    cpcm_solvation = config.get("cpcm_solvation", None)
+    # assert alpb_solvation and cpcm_solvation are not both set
+    if alpb_solvation is not None and cpcm_solvation is not None:
+        raise ValueError("Only one of alpb_solvation or cpcm_solvation can be set.")
+    verbosity = config.get("verbosity", 0)
+    init_kwargs = {
+        "method": method,
+        "charge": charge,
+        "uhf": multiplicity - 1,
+    }
+    set_kwargs = {
+        "accuracy": accuracy,
+        "max-iter": max_iter,
+        "mixer-damping": mixer_damping,
+        "temperature": eTemp * units.kB / units.Hartree,
+        "verbosity": verbosity,
+    }
+    add_kwargs = {}
+    if electric_field is not None:
+        add_kwargs["electric-field"] = electric_field
+    if spin_polarization is not None:
+        add_kwargs["spin-polarization"] = spin_polarization
+    if alpb_solvation is not None:
+        add_kwargs["alpb-solvation"] = alpb_solvation
+    elif cpcm_solvation is not None:
+        add_kwargs["cpcm-solvation"] = cpcm_solvation
+    
+
+    # set calculator
+    calc = TBLite(
+        method=method,
+        charge=charge,
+        multiplicity=multiplicity,
+        accuracy=accuracy,
+        electronic_temperature=eTemp,
+        max_iterations=max_iter,
+        mixer_damping=mixer_damping,
+        electric_field=electric_field,
+        spin_polarization=spin_polarization,
+        alpb_solvation=alpb_solvation,
+        cpcm_solvation=cpcm_solvation,
+        verbosity=verbosity,
+    )
+    atoms.calc = calc
 
     # task 1: optimization
     run_opt = config.get("opt", False)
@@ -209,6 +213,7 @@ def main():
         if "constraints" in opt_config:
             cons = Constraints(atoms)
             cons_dict: dict = opt_config["constraints"]
+            # translation
             if "fix_translation" in cons_dict:
                 for atom_idx in cons_dict["fix_translation"]:
                     cons.fix_translation(atom_idx)
@@ -233,7 +238,7 @@ def main():
         sella_opt = Sella(
             atoms=atoms,
             trajectory=opt_config.get("trajectory", f"{filename}_opt.traj"),
-            order=order,
+            order=order,  # 0 for minimum, 1 for saddle point
             internal=opt_config.get("internal", True),
             constraints=cons,
             constraints_tol=float(opt_config.get("constraints_tol", 1e-5)),
@@ -244,14 +249,14 @@ def main():
             threepoint=True,
             nsteps_per_diag=opt_config.get("nsteps_per_diag", 3),
             diag_every_n=opt_config.get("diag_every_n", None),
-            hessian_function=hessian_function,
+            hessian_function=lambda x: hessian_function(x, init_kwargs, set_kwargs, add_kwargs),
         )
-        energy_criteria = opt_config.get("energy", 1e-6) * units.Hartree
+        energy_criteria = float(opt_config.get("energy", 1e-6)) * units.Hartree
         fmax_criteria = float(opt_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
         frms_criteria = float(opt_config.get("frms", 3.0e-4)) * units.Hartree / units.Bohr
         dmax_criteria = float(opt_config.get("dmax", 1.8e-3))
         drms_criteria = float(opt_config.get("drms", 1.2e-3))
-        max_steps: int = opt_config.get("max_steps", 1000)
+        max_steps: int = opt_config.get("max_steps", 200)
         last_pos = atoms.get_positions().copy()
         last_energy = np.inf
         for i in sella_opt.irun(fmax=0, steps=max_steps):
@@ -286,62 +291,82 @@ def main():
 
     # task 2: single point energy
     start_time = time.time()
-    energy = atoms.get_potential_energy()
+    xtb_calc = Calculator(
+        numbers=atoms.numbers,
+        positions=atoms.positions / units.Bohr,
+        **init_kwargs,
+    )
+    if set_kwargs:
+        for key, value in set_kwargs.items():
+            xtb_calc.set(key, value)
+    if add_kwargs:
+        for key, value in add_kwargs.items():
+            xtb_calc.add(key, value)
+    res = xtb_calc.singlepoint()
+    energy = res.get("energy")  # in Hartree
+    # energy = atoms.get_potential_energy() / units.Hartree
     end_time = time.time()
-    print(f"Energy prediction completed in {end_time - start_time:.2f} seconds.")
-    print(f"MLFF energy  [eV]: {energy:16.10f}")
-    print(f"MLFF energy  [Eh]: {energy / units.Hartree:16.10f}")
+    print(f"Single point calculation completed in {end_time - start_time:.2f} seconds.")
+    print(f"Total Energy: {energy:.6f} Eh")
 
     # task 3: forces (gradients)
-    run_forces: bool = config.get("forces", False)
+    run_forces = config.get("forces", False)
     if run_forces:
         start_time = time.time()
-        forces = atoms.get_forces()
+        forces = -res.get("gradient")  # in Hartree/Bohr
         end_time = time.time()
-        print(f"Forces prediction completed in {end_time - start_time:.2f} seconds.")
-        print("MLFF forces [eV/Ang]:")
-        elements = atoms.get_chemical_symbols()
-        for i, (ele, force) in enumerate(zip(elements, forces)):
+        print(f"Force calculation completed in {end_time - start_time:.2f} seconds.")
+        print("Forces (Eh/Bohr):")
+        for i, (ele, force) in enumerate(zip(atoms.get_chemical_symbols(), forces)):
             print(f"{i+1:3d} {ele:2s} {force[0]:12.6f} {force[1]:12.6f} {force[2]:12.6f}")
-        save_forces: bool = config.get("save_forces", False)
+        save_forces = config.get("save_forces", False)
         if save_forces:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("forces", data=forces)
-                h5f.create_dataset("forces_unit", data="eV/Ang")
+                h5f.create_dataset("forces_unit", data="Eh/Bohr")
 
     # task 4: vibrational frequency analysis
-    run_freq: bool = config.get("freq", False)
+    run_freq = config.get("freq", False)
+    freq_config = config.get("freq_config", {})
     if run_freq:
+        # calculate Hessian matrix
         start_time = time.time()
-        hessian = hessian_function(atoms)
+        hessian = xTB_numerical_hessian(
+            atoms.get_atomic_numbers(),
+            atoms.get_positions(),
+            init_kwargs,
+            set_kwargs,
+            add_kwargs,
+        )
         end_time = time.time()
-        print(f"Hessian prediction completed in {end_time - start_time:.2f} seconds.")
+        print(f"Hessian calculation completed in {end_time - start_time:.2f} seconds.")
+
+        CACHED_POSITION = atoms.get_positions().copy()
+        _hessian = hessian.transpose(0, 2, 1, 3).reshape(3 * len(atoms), 3 * len(atoms))
+        CACHED_HESSIAN = _hessian * (units.Hartree / units.Bohr**2)  # Convert from Hartree/Bohr^2
+        # (optional) save Hessian matrix (a.u.)
         save_hess: bool = config.get("save_hess", False)
         if save_hess:
             with h5py.File(datafile, 'a') as h5f:
                 h5f.create_dataset("hessian", data=hessian)
-                h5f.create_dataset("hessian_unit", data="eV/Ang^2")
+                h5f.create_dataset("hessian_unit", data="Eh/Bohr^2")
         
-        # convert hessian to Hartree/Bohr^2
-        _hessian = hessian.reshape(n_atoms, 3, n_atoms, 3).transpose(0, 2, 1, 3)
-        _hessian *= (units.Bohr**2 / units.Hartree)  # Convert from eV/Ang^2 to Hartree/Bohr^2
-
-        # create a temporary Mole()
+        # vibrational analysis
         start_time = time.time()
         mol = gto.M(
             atom=[(ele, coord) for ele, coord in zip(atoms.get_chemical_symbols(), atoms.get_positions())],
             charge=charge,
-            spin=spin,
+            spin=multiplicity - 1,
         )
-        freq_info = thermo.harmonic_analysis(mol, _hessian, imaginary_freq=False)
+        freq_info = thermo.harmonic_analysis(mol, hessian, imaginary_freq=False)
         # imaginary frequencies
         freq_au = freq_info["freq_au"]
         num_imag = np.sum(freq_au < 0)
         if num_imag > 0:
             print(f"Note: {num_imag} imaginary frequencies detected!")
-        dummy_mf = SimpleNamespace(mol=mol, e_tot=energy / units.Hartree)
-        temp = config.get("temp", 298.15)
-        press = config.get("press", 101325)
+        dummy_mf = SimpleNamespace(mol=mol, e_tot=energy)
+        temp = freq_config.get("temp", 298.15)
+        press = freq_config.get("press", 101325)
         thermo_info = thermo.thermo(dummy_mf, freq_au, temp, press)
         end_time = time.time()
         print(f"Vibrational frequency analysis completed in {end_time - start_time:.2f} seconds.")
@@ -364,9 +389,9 @@ def main():
                 for pyscf_name, reactml_name in zip(pyscf_names, reactml_names):
                     h5f.create_dataset(reactml_name, data=thermo_info[pyscf_name][0])
                     h5f.create_dataset(f"{reactml_name}_unit", data=thermo_info[pyscf_name][1])
-
+    
     # task 5: IRC
-    run_irc: bool = config.get("irc", False)
+    run_irc = config.get("irc", False)
     irc_trajectory: str = config.get("irc_trajectory", f"{filename}_irc.traj")
     if run_irc:
         start_time = time.time()
@@ -380,24 +405,16 @@ def main():
             peskwargs={"threepoint": True},
             keep_going=irc_config.get("keep_going", False),
             diag_every_n=irc_config.get("diag_every_n", None),
-            hessian_function=hessian_function,
+            hessian_function=lambda x: hessian_function(x, init_kwargs, set_kwargs, add_kwargs),
         )
-        fmax: float = irc_config.get("fmax", 4.5e-4) * units.Hartree / units.Bohr
-        max_steps = irc_config.get("max_steps", 100)
+        fmax: float = float(irc_config.get("fmax", 4.5e-4)) * units.Hartree / units.Bohr
+        irc_steps: int = irc_config.get("irc_steps", 10)
         direction: str = irc_config.get("direction", "both")
         assert direction in ["forward", "reverse", "both"], "Invalid IRC direction. Choose from 'forward', 'reverse', or 'both'."
 
-        # forward direction
+        # reverse direction
         # record the initial position
         pos_init = atoms.get_positions().copy()
-        if direction in ["forward", "both"]:
-            print("Starting forward IRC")
-            irc_converged = sella_irc.run(fmax=fmax, steps=max_steps, direction="forward")
-            if not irc_converged:
-                Warning("Forward IRC did not converge within the maximum number of steps.")
-            ase.io.write(f"{filename}_irc_forward.xyz", sella_irc.atoms, format="xyz")
-        
-        # reverse direction
         if direction in ["reverse", "both"]:
             print("Starting reverse IRC")
             try:
@@ -436,7 +453,7 @@ def main():
             forward_steps = 0
         end_time = time.time()
         print(f"IRC calculation completed in {end_time - start_time:.2f} seconds.")
-        
+
         save_traj_xyz: bool = irc_config.get("save_traj_xyz", False)
         if save_traj_xyz:
             atoms_traj = ase.io.Trajectory(irc_trajectory, mode="r")
